@@ -17,6 +17,67 @@ require_teacher_auth();
 $pdo = get_db($config);
 ensure_teachers_table($pdo);
 
+$tabPrefix = get_table_prefix($config);
+$successMessage = null;
+$errorMessage   = null;
+
+// Handle Device Management Actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $submittedToken = $_POST['csrf_token'] ?? null;
+    $formAction     = $_POST['form_action'] ?? '';
+
+    if (!validate_csrf_token($submittedToken)) {
+        $errorMessage = 'Security token invalid or expired. Please refresh the page.';
+    } elseif ($formAction === 'add_device') {
+        $newDeviceId = strtoupper(trim((string)($_POST['device_id'] ?? '')));
+        $newName     = trim((string)($_POST['name'] ?? ''));
+        $newRoom     = trim((string)($_POST['assigned_room'] ?? ''));
+        $isActive    = isset($_POST['is_active']) ? 1 : 0;
+
+        if ($newDeviceId === '' || !preg_match('/^[A-Za-z0-9_\-\.]{2,50}$/', $newDeviceId)) {
+            $errorMessage = 'Invalid Tablet ID. Must be 2-50 alphanumeric characters (e.g. TAB-006, XX-01).';
+        } else {
+            $checkStmt = $pdo->prepare("SELECT id FROM `{$tabPrefix}devices` WHERE device_id = :id LIMIT 1");
+            $checkStmt->execute([':id' => $newDeviceId]);
+            if ($checkStmt->fetch()) {
+                $errorMessage = "Tablet ID '{$newDeviceId}' is already registered in the system.";
+            } else {
+                if ($newName === '') {
+                    $newName = 'Tablet ' . $newDeviceId;
+                }
+                $insertStmt = $pdo->prepare(
+                    "INSERT INTO `{$tabPrefix}devices` (device_id, name, assigned_room, is_active, created_at, updated_at)
+                     VALUES (:device_id, :name, :room, :is_active, NOW(), NOW())"
+                );
+                $insertStmt->execute([
+                    ':device_id' => $newDeviceId,
+                    ':name'      => $newName,
+                    ':room'      => ($newRoom !== '') ? $newRoom : null,
+                    ':is_active' => $isActive,
+                ]);
+                $successMessage = "Tablet ID '{$newDeviceId}' registered successfully! You can now configure the tablet app with this ID.";
+            }
+        }
+    } elseif ($formAction === 'toggle_active') {
+        $toggleId = trim((string)($_POST['device_id'] ?? ''));
+        if ($toggleId !== '') {
+            $toggleStmt = $pdo->prepare(
+                "UPDATE `{$tabPrefix}devices` SET is_active = IF(is_active = 1, 0, 1), updated_at = NOW() WHERE device_id = :id LIMIT 1"
+            );
+            $toggleStmt->execute([':id' => $toggleId]);
+            $successMessage = "Status updated for tablet '{$toggleId}'.";
+        }
+    } elseif ($formAction === 'delete_device') {
+        $delId = trim((string)($_POST['device_id'] ?? ''));
+        if ($delId !== '') {
+            $pdo->prepare("DELETE FROM `{$tabPrefix}battery_reports` WHERE device_id = :id")->execute([':id' => $delId]);
+            $delStmt = $pdo->prepare("DELETE FROM `{$tabPrefix}devices` WHERE device_id = :id LIMIT 1");
+            $delStmt->execute([':id' => $delId]);
+            $successMessage = "Tablet '{$delId}' has been deleted.";
+        }
+    }
+}
+
 // Resolve low battery threshold
 $lowBatteryThreshold = (int)get_db_setting(
     $pdo,
@@ -26,8 +87,6 @@ $lowBatteryThreshold = (int)get_db_setting(
 
 $offlineThresholdMinutes = (int)($config['app']['offline_threshold_minutes'] ?? 30);
 $currentTime = time();
-
-$tabPrefix = get_table_prefix($config);
 
 // Fetch all registered tablets
 $stmt = $pdo->query(
@@ -98,6 +157,7 @@ foreach ($rows as $row) {
 
 $totalRegistered = count($devices);
 $totalLowBattery = count($lowBatteryDevices);
+$csrfToken = get_csrf_token();
 $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', ENT_QUOTES, 'UTF-8');
 ?>
 <!DOCTYPE html>
@@ -136,6 +196,20 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
 
   <!-- Main Container -->
   <main class="main-container">
+
+    <?php if ($successMessage): ?>
+      <div class="alert alert-success">
+        <span>✓ <?= htmlspecialchars($successMessage, ENT_QUOTES, 'UTF-8') ?></span>
+        <button type="button" class="alert-close" onclick="this.parentElement.remove()">✕</button>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($errorMessage): ?>
+      <div class="alert alert-danger">
+        <span>⚠️ <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?></span>
+        <button type="button" class="alert-close" onclick="this.parentElement.remove()">✕</button>
+      </div>
+    <?php endif; ?>
 
     <!-- 1. Statistics Cards -->
     <section class="metrics-grid">
@@ -227,8 +301,90 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
 
     <!-- 3. All Registered Tablets Table & Controls -->
     <section class="section-devices">
-      <div class="section-header">
+      <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
         <h2 class="section-title">📋 All Registered Tablets</h2>
+        <button type="button" class="btn-primary" onclick="toggleAddDeviceForm()" id="btnAddDeviceBtn" style="width: auto; padding: 0.5rem 1.1rem; font-size: 0.9rem;">
+          ➕ Add Tablet ID
+        </button>
+      </div>
+
+      <!-- Add New Tablet Form Card -->
+      <div id="addDeviceCard" class="add-device-card" style="display: <?= ($errorMessage && ($_POST['form_action'] ?? '') === 'add_device') ? 'block' : 'none' ?>;">
+        <div class="add-device-header">
+          <div>
+            <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--text-main);">➕ Register New Tablet ID</h3>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem;">
+              Enter the unique Tablet ID that you will type into the tablet app.
+            </p>
+          </div>
+          <button type="button" class="btn-close" onclick="toggleAddDeviceForm(false)" title="Close">✕</button>
+        </div>
+
+        <form method="POST" action="index.php" class="add-device-form">
+          <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+          <input type="hidden" name="form_action" value="add_device">
+
+          <div class="form-grid">
+            <div class="form-group">
+              <label class="form-label" for="new_device_id">Tablet ID <span class="required" style="color:var(--danger)">*</span></label>
+              <input 
+                type="text" 
+                id="new_device_id" 
+                name="device_id" 
+                class="form-input" 
+                placeholder="e.g. TAB-006, XX-01" 
+                required 
+                pattern="[A-Za-z0-9_\-\.]{2,50}"
+                autocomplete="off"
+                style="text-transform: uppercase;"
+                value="<?= htmlspecialchars($_POST['device_id'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
+              >
+              <small class="form-hint">Unique hardware ID entered on the tablet (e.g. TAB-006, XX-01).</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="new_device_name">Tablet Display Name</label>
+              <input 
+                type="text" 
+                id="new_device_name" 
+                name="name" 
+                class="form-input" 
+                placeholder="e.g. Tablet 06, Cart 1 - #06"
+                value="<?= htmlspecialchars($_POST['name'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
+              >
+              <small class="form-hint">Friendly label displayed on the dashboard (optional).</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="new_assigned_room">Assigned Room / Cart</label>
+              <input 
+                type="text" 
+                id="new_assigned_room" 
+                name="assigned_room" 
+                class="form-input" 
+                placeholder="e.g. Classroom 101, Science Lab"
+                value="<?= htmlspecialchars($_POST['assigned_room'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
+              >
+              <small class="form-hint">Classroom, cart, or cabinet location (optional).</small>
+            </div>
+
+            <div class="form-group" style="display: flex; align-items: center; margin-top: 1.5rem;">
+              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
+                <input type="checkbox" name="is_active" value="1" checked style="width: 1.1rem; height: 1.1rem;">
+                <span>Active (Accept battery reports)</span>
+              </label>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.75rem; margin-top: 1.25rem;">
+            <button type="submit" class="btn-primary" style="width: auto; padding: 0.65rem 1.5rem;">
+              Register Tablet
+            </button>
+            <button type="button" class="btn-secondary" onclick="toggleAddDeviceForm(false)">
+              Cancel
+            </button>
+          </div>
+        </form>
       </div>
 
       <!-- Search & Filter Toolbar -->
@@ -272,12 +428,13 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
               <th>Charging</th>
               <th>Last Contact</th>
               <th>Status</th>
+              <th style="text-align: right;">Actions</th>
             </tr>
           </thead>
           <tbody>
             <?php if (empty($devices)): ?>
               <tr>
-                <td colspan="6" class="empty-state">
+                <td colspan="7" class="empty-state">
                   <div class="empty-state-icon">📱</div>
                   <p>No tablets have been registered yet.</p>
                 </td>
@@ -351,6 +508,27 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
                     <?php else: ?>
                       <span class="status-pill offline"><span class="status-dot"></span> Offline</span>
                     <?php endif; ?>
+                  </td>
+                  <td style="text-align: right;">
+                    <div class="action-buttons" style="justify-content: flex-end;">
+                      <form method="POST" action="index.php" style="display:inline;" onsubmit="return confirm('Toggle active status for <?= htmlspecialchars($d['device_id'], ENT_QUOTES, 'UTF-8') ?>?');">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                        <input type="hidden" name="form_action" value="toggle_active">
+                        <input type="hidden" name="device_id" value="<?= htmlspecialchars($d['device_id'], ENT_QUOTES, 'UTF-8') ?>">
+                        <button type="submit" class="btn-action <?= $d['is_active'] ? 'btn-active' : 'btn-inactive' ?>" title="Click to <?= $d['is_active'] ? 'Deactivate' : 'Activate' ?>">
+                          <?= $d['is_active'] ? 'Active' : 'Disabled' ?>
+                        </button>
+                      </form>
+
+                      <form method="POST" action="index.php" style="display:inline;" onsubmit="return confirm('Are you sure you want to delete tablet <?= htmlspecialchars($d['device_id'], ENT_QUOTES, 'UTF-8') ?>? All reports for this tablet will also be removed.');">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                        <input type="hidden" name="form_action" value="delete_device">
+                        <input type="hidden" name="device_id" value="<?= htmlspecialchars($d['device_id'], ENT_QUOTES, 'UTF-8') ?>">
+                        <button type="submit" class="btn-action btn-delete" title="Delete Tablet">
+                          🗑️
+                        </button>
+                      </form>
+                    </div>
                   </td>
                 </tr>
               <?php endforeach; ?>
@@ -465,6 +643,17 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
         }, 30000);
       }
     })();
+
+    function toggleAddDeviceForm(show) {
+      const card = document.getElementById('addDeviceCard');
+      if (!card) return;
+      const isCurrentlyHidden = card.style.display === 'none' || card.style.display === '';
+      const willShow = (show !== undefined) ? show : isCurrentlyHidden;
+      card.style.display = willShow ? 'block' : 'none';
+      if (willShow) {
+        document.getElementById('new_device_id')?.focus();
+      }
+    }
   </script>
 
 </body>

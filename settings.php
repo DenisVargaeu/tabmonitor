@@ -75,6 +75,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errorMessage = 'Incorrect current password.';
             }
         }
+    } elseif ($formAction === 'add_device') {
+        $newDeviceId = strtoupper(trim((string)($_POST['device_id'] ?? '')));
+        $newName     = trim((string)($_POST['name'] ?? ''));
+        $newRoom     = trim((string)($_POST['assigned_room'] ?? ''));
+        $isActive    = isset($_POST['is_active']) ? 1 : 0;
+        $tabPrefix   = get_table_prefix($config);
+
+        if ($newDeviceId === '' || !preg_match('/^[A-Za-z0-9_\-\.]{2,50}$/', $newDeviceId)) {
+            $errorMessage = 'Invalid Tablet ID. Must be 2-50 alphanumeric characters (e.g. TAB-006, XX-01).';
+        } else {
+            $checkStmt = $pdo->prepare("SELECT id FROM `{$tabPrefix}devices` WHERE device_id = :id LIMIT 1");
+            $checkStmt->execute([':id' => $newDeviceId]);
+            if ($checkStmt->fetch()) {
+                $errorMessage = "Tablet ID '{$newDeviceId}' is already registered.";
+            } else {
+                if ($newName === '') {
+                    $newName = 'Tablet ' . $newDeviceId;
+                }
+                $insertStmt = $pdo->prepare(
+                    "INSERT INTO `{$tabPrefix}devices` (device_id, name, assigned_room, is_active, created_at, updated_at)
+                     VALUES (:device_id, :name, :room, :is_active, NOW(), NOW())"
+                );
+                $insertStmt->execute([
+                    ':device_id' => $newDeviceId,
+                    ':name'      => $newName,
+                    ':room'      => ($newRoom !== '') ? $newRoom : null,
+                    ':is_active' => $isActive,
+                ]);
+                $successMessage = "Tablet ID '{$newDeviceId}' registered successfully! You can now configure this tablet.";
+            }
+        }
     }
 }
 
@@ -84,6 +115,10 @@ $currentThreshold = (int)get_db_setting(
     'low_battery_threshold',
     $config['app']['default_low_battery_threshold'] ?? 20
 );
+
+$tabPrefix = get_table_prefix($config);
+$deviceCountStmt = $pdo->query("SELECT COUNT(*) FROM `{$tabPrefix}devices`");
+$totalDevicesCount = (int)$deviceCountStmt->fetchColumn();
 
 $csrfToken = get_csrf_token();
 $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', ENT_QUOTES, 'UTF-8');
@@ -182,7 +217,71 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
           </form>
         </div>
 
-        <!-- 2. Teacher Password Update Card -->
+        <!-- 2. Register New Tablet ID Card -->
+        <div class="settings-card">
+          <h2 class="settings-card-title">📱 Register New Tablet ID</h2>
+          <p class="settings-card-desc">
+            Pre-register a new tablet ID before connecting the tablet app. Only pre-registered IDs are allowed to submit battery reports.
+          </p>
+
+          <form method="POST" action="settings.php">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+            <input type="hidden" name="form_action" value="add_device">
+
+            <div class="form-group">
+              <label class="form-label" for="settings_device_id">Tablet ID <span class="required" style="color:var(--danger)">*</span></label>
+              <input 
+                type="text" 
+                id="settings_device_id" 
+                name="device_id" 
+                class="form-input" 
+                placeholder="e.g. TAB-006, XX-01" 
+                required 
+                pattern="[A-Za-z0-9_\-\.]{2,50}"
+                autocomplete="off"
+                style="text-transform: uppercase;"
+              >
+              <small class="form-hint">Unique identifier typed into the tablet app.</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="settings_name">Tablet Display Name</label>
+              <input 
+                type="text" 
+                id="settings_name" 
+                name="name" 
+                class="form-input" 
+                placeholder="e.g. Tablet 06, Cart 1 - #06"
+              >
+              <small class="form-hint">Friendly label shown on dashboard.</small>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="settings_assigned_room">Assigned Room / Cart</label>
+              <input 
+                type="text" 
+                id="settings_assigned_room" 
+                name="assigned_room" 
+                class="form-input" 
+                placeholder="e.g. Classroom 101, IT Lab"
+              >
+              <small class="form-hint">Physical location or cart.</small>
+            </div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+              <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.9rem; font-weight: 500;">
+                <input type="checkbox" name="is_active" value="1" checked style="width: 1.1rem; height: 1.1rem;">
+                <span>Active (Accept battery reports)</span>
+              </label>
+            </div>
+
+            <button type="submit" class="btn-primary" style="width: auto; padding: 0.65rem 1.5rem; margin-top: 0.5rem;">
+              Register Tablet ID
+            </button>
+          </form>
+        </div>
+
+        <!-- 3. Teacher Password Update Card -->
         <div class="settings-card">
           <h2 class="settings-card-title">🔑 Change Password</h2>
           <p class="settings-card-desc">
@@ -234,6 +333,10 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
             <li class="info-item">
               <span class="info-label">Database</span>
               <span class="info-val"><?= htmlspecialchars((string)($config['db']['name'] ?? 'MySQL'), ENT_QUOTES, 'UTF-8') ?></span>
+            </li>
+            <li class="info-item">
+              <span class="info-label">Registered Tablets</span>
+              <span class="info-val"><a href="index.php" style="color: var(--primary); text-decoration: none; font-weight: bold;"><?= $totalDevicesCount ?> tablets ➔</a></span>
             </li>
             <li class="info-item">
               <span class="info-label">Offline Timeout</span>
