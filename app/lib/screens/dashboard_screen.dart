@@ -85,6 +85,8 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     super.dispose();
   }
 
+  int _lastHandledSyncTimestamp = 0;
+
   void _startCountdownTimer() {
     _countdownTimer?.cancel();
     _secondsUntilNextReport = _reportIntervalSeconds;
@@ -99,7 +101,28 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         _secondsUntilNextReport = _reportIntervalSeconds;
         _sendBatteryReport(silent: true);
       }
+
+      // Check for remote commands from teacher (force sync) every 5 seconds
+      if (_secondsUntilNextReport % 5 == 0) {
+        _checkRemoteCommands();
+      }
     });
+  }
+
+  Future<void> _checkRemoteCommands() async {
+    if (_config == null || _isSyncing) return;
+    try {
+      final res = await _apiService.checkForceSync(_config!);
+      if (res != null && res['force_sync_requested'] == true) {
+        final rawTs = res['force_sync_timestamp'];
+        final int ts = rawTs is int ? rawTs : int.tryParse(rawTs?.toString() ?? '0') ?? 0;
+        if (ts > _lastHandledSyncTimestamp) {
+          _lastHandledSyncTimestamp = ts;
+          debugPrint('[DashboardScreen] Force sync received from teacher (ts=$ts)! Reporting telemetry immediately...');
+          _sendBatteryReport(silent: true);
+        }
+      }
+    } catch (_) {}
   }
 
   @override

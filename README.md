@@ -235,6 +235,10 @@ The Teacher Web Dashboard provides an instant, responsive birds-eye view of your
    - Immediate database persistence; new threshold is distributed to tablets upon their next sync.
 6. **Classroom Wallboard Mode**:
    - Built-in 30-second auto-refresh toggle for unattended classroom monitors and wall-mounted dashboards.
+7. **⚡ Fleet Force Reload & Live Telemetry Acquisition**:
+   - Prominent `⚡ Vynútiť načítanie zo zariadení` toolbar button broadcasts an urgent telemetry sync signal across all tablets.
+   - Connected tablets instantly report their latest battery level and charging status within seconds.
+   - The dashboard dynamically polls responses, updates metric counters, and pulses updated rows with green highlights in real time.
 
 ---
 

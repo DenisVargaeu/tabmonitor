@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS `tab_settings` (
 INSERT INTO `tab_settings` (`setting_key`, `setting_value`, `description`)
 VALUES
     ('low_battery_threshold', '20', 'Threshold percentage below which a device is flagged as low battery'),
-    ('report_interval_minutes', '15', 'Interval in minutes between tablet battery reports (min 5, default 15)')
+    ('report_interval_minutes', '15', 'Interval in minutes between tablet battery reports (min 5, default 15)'),
+    ('force_sync_requested_at', '0', 'Timestamp of last teacher force sync command broadcast to tablet fleet')
 ON DUPLICATE KEY UPDATE `description` = VALUES(`description`);
 
 -- -------------------------------------------------------------

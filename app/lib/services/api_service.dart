@@ -195,6 +195,30 @@ class ApiService {
     }
   }
 
+  /// Poll server for remote commands (e.g. teacher-initiated force refresh).
+  Future<Map<String, dynamic>?> checkForceSync(DeviceConfig config) async {
+    if (!config.isValid) return null;
+    try {
+      final uri = Uri.parse(
+        '${config.normalizedUrl}/api.php?action=check-sync&device_id=${Uri.encodeComponent(config.deviceId)}&api_key=${Uri.encodeComponent(config.apiKey)}'
+      );
+      final response = await _client.get(
+        uri,
+        headers: _buildHeaders(config.apiKey),
+      ).timeout(const Duration(seconds: 4));
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+      }
+    } catch (_) {
+      // Ignore poll network errors silently to preserve battery and logs
+    }
+    return null;
+  }
+
   void dispose() {
     _client.close();
   }

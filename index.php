@@ -21,6 +21,125 @@ $tabPrefix = get_table_prefix($config);
 $successMessage = null;
 $errorMessage   = null;
 
+// Handle AJAX Requests (Force sync broadcast & live device status)
+$ajaxAction = $_GET['ajax'] ?? $_POST['ajax'] ?? null;
+if ($ajaxAction !== null) {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+
+    if ($ajaxAction === 'force_sync') {
+        $nowTs = time();
+        set_db_setting(
+            $pdo,
+            'force_sync_requested_at',
+            (string)$nowTs,
+            'Timestamp of last teacher force sync command broadcast to tablet fleet'
+        );
+
+        $stmt = $pdo->query("SELECT COUNT(*) FROM `{$tabPrefix}devices` WHERE is_active = 1");
+        $activeCount = (int)$stmt->fetchColumn();
+
+        echo json_encode([
+            'status'               => 'ok',
+            'success'              => true,
+            'message'              => 'Force sync command broadcast to all active tablets.',
+            'force_sync_timestamp' => $nowTs,
+            'force_sync_at'        => date('Y-m-d H:i:s', $nowTs),
+            'active_devices_count' => $activeCount,
+        ]);
+        exit;
+    }
+
+    if ($ajaxAction === 'get_devices') {
+        $lowBatteryThreshold = (int)get_db_setting(
+            $pdo,
+            'low_battery_threshold',
+            $config['app']['default_low_battery_threshold'] ?? 20
+        );
+        $offlineThresholdMinutes = (int)($config['app']['offline_threshold_minutes'] ?? 30);
+        $currentTime = time();
+
+        $stmt = $pdo->query(
+            "SELECT id, device_id, name, assigned_room, is_active,
+                    last_battery_level, last_is_charging, last_reported_at, last_ip, updated_at
+             FROM `{$tabPrefix}devices`
+             ORDER BY name ASC"
+        );
+        $rows = $stmt->fetchAll();
+
+        $deviceList = [];
+        $totalOnline = 0;
+        $totalOffline = 0;
+        $totalCharging = 0;
+        $totalLowBattery = 0;
+
+        foreach ($rows as $row) {
+            $isActive = (bool)$row['is_active'];
+            $hasReported = !empty($row['last_reported_at']);
+            $minutesSinceReport = null;
+            $isOnline = false;
+            $reportTs = 0;
+
+            if ($hasReported) {
+                $ts = strtotime($row['last_reported_at']);
+                if ($ts !== false) {
+                    $reportTs = $ts;
+                    $minutesSinceReport = max(0, (int)round(($currentTime - $ts) / 60));
+                    $isOnline = ($minutesSinceReport <= $offlineThresholdMinutes) && $isActive;
+                }
+            }
+
+            if ($isOnline) {
+                $totalOnline++;
+            } else {
+                $totalOffline++;
+            }
+
+            $batteryLevel = ($row['last_battery_level'] !== null) ? (int)$row['last_battery_level'] : null;
+            $isCharging = ($row['last_is_charging'] !== null) ? (bool)$row['last_is_charging'] : false;
+
+            if ($isCharging) {
+                $totalCharging++;
+            }
+
+            $isLowBattery = ($batteryLevel !== null && $batteryLevel <= $lowBatteryThreshold);
+            if ($isLowBattery) {
+                $totalLowBattery++;
+            }
+
+            $deviceList[] = [
+                'id'                      => (int)$row['id'],
+                'device_id'               => (string)$row['device_id'],
+                'name'                    => (string)$row['name'],
+                'assigned_room'           => !empty($row['assigned_room']) ? (string)$row['assigned_room'] : 'Unassigned',
+                'is_active'               => $isActive,
+                'battery_level'           => $batteryLevel,
+                'is_charging'             => $isCharging,
+                'is_online'               => $isOnline,
+                'is_low_battery'          => $isLowBattery,
+                'last_reported_at'        => $row['last_reported_at'],
+                'last_reported_timestamp' => $reportTs,
+                'relative_time'           => format_relative_time($row['last_reported_at']),
+                'last_ip'                 => $row['last_ip'],
+            ];
+        }
+
+        echo json_encode([
+            'status'            => 'ok',
+            'success'           => true,
+            'server_time'       => date('c'),
+            'total_registered'  => count($rows),
+            'total_online'      => $totalOnline,
+            'total_offline'     => $totalOffline,
+            'total_charging'    => $totalCharging,
+            'total_low_battery' => $totalLowBattery,
+            'battery_threshold' => $lowBatteryThreshold,
+            'devices'           => $deviceList,
+        ]);
+        exit;
+    }
+}
+
 // Handle Device Management Actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $submittedToken = $_POST['csrf_token'] ?? null;
@@ -230,7 +349,7 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
       <div class="metric-card">
         <div class="metric-info">
           <h3>Total Tablets</h3>
-          <div class="metric-value"><?= $totalRegistered ?></div>
+          <div class="metric-value" id="metricTotalTablets"><?= $totalRegistered ?></div>
         </div>
         <div class="metric-icon">📱</div>
       </div>
@@ -238,7 +357,7 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
       <div class="metric-card">
         <div class="metric-info">
           <h3>Online</h3>
-          <div class="metric-value" style="color: var(--success);"><?= $totalOnline ?></div>
+          <div class="metric-value" id="metricTotalOnline" style="color: var(--success);"><?= $totalOnline ?></div>
         </div>
         <div class="metric-icon">🟢</div>
       </div>
@@ -246,19 +365,19 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
       <div class="metric-card">
         <div class="metric-info">
           <h3>Offline</h3>
-          <div class="metric-value" style="color: var(--text-muted);"><?= $totalOffline ?></div>
+          <div class="metric-value" id="metricTotalOffline" style="color: var(--text-muted);"><?= $totalOffline ?></div>
         </div>
         <div class="metric-icon">⚪</div>
       </div>
 
-      <div class="metric-card <?= ($totalLowBattery > 0) ? 'alert-card' : '' ?>">
+      <div class="metric-card <?= ($totalLowBattery > 0) ? 'alert-card' : '' ?>" id="metricLowBatteryCard">
         <div class="metric-info">
           <h3>Low Battery Alerts</h3>
-          <div class="metric-value" style="<?= ($totalLowBattery > 0) ? 'color: var(--danger);' : '' ?>">
+          <div class="metric-value" id="metricTotalLowBattery" style="<?= ($totalLowBattery > 0) ? 'color: var(--danger);' : '' ?>">
             <?= $totalLowBattery ?>
           </div>
         </div>
-        <div class="metric-icon"><?= ($totalLowBattery > 0) ? '⚠️' : '🔋' ?></div>
+        <div class="metric-icon" id="metricLowBatteryIcon"><?= ($totalLowBattery > 0) ? '⚠️' : '🔋' ?></div>
       </div>
     </section>
 
@@ -427,12 +546,32 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
         </div>
 
         <div class="refresh-control">
+          <button type="button" class="btn-force-reload" id="btnForceReload" onclick="triggerForceFleetReload();" title="Vynútiť okamžité odoslanie telemetrie zo všetkých tabletov">
+            ⚡ Vynútiť načítanie zo zariadení
+          </button>
           <button type="button" class="btn-refresh" onclick="window.location.reload();" title="Refresh list now">
             🔄 Refresh
           </button>
           <label class="auto-refresh-label" title="Automatically reload every 30 seconds">
             <input type="checkbox" id="autoRefreshCheckbox"> Auto-refresh (30s)
           </label>
+        </div>
+      </div>
+
+      <!-- Force Sync Live Status Banner -->
+      <div id="forceSyncBanner" class="force-sync-banner" style="display: none;">
+        <div style="display: flex; align-items: center; gap: 0.65rem;">
+          <span id="forceSyncIcon" style="font-size: 1.25rem;">📡</span>
+          <div>
+            <strong id="forceSyncTitle" style="color: inherit;">Vynucovanie načítania zo zariadení:</strong>
+            <span id="forceSyncDesc" style="margin-left: 4px;">Odoslaná požiadavka. Čakám na odpovede tabletov v reálnom čase...</span>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.85rem;">
+          <div id="forceSyncProgress" style="font-weight: 700; font-family: monospace; font-size: 0.95rem;">
+            0 / <?= $totalRegistered ?> odpovedalo
+          </div>
+          <button type="button" onclick="document.getElementById('forceSyncBanner').style.display='none'" style="background:none; border:none; cursor:pointer; font-size:1.1rem; color:inherit; padding: 2px 6px;" title="Zatvoriť">✕</button>
         </div>
       </div>
 
@@ -666,6 +805,201 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
         }, 30000);
       }
     })();
+
+    let isFleetSyncing = false;
+    let syncStartTime = 0;
+    let fleetSyncInterval = null;
+
+    async function triggerForceFleetReload() {
+      if (isFleetSyncing) return;
+      isFleetSyncing = true;
+      syncStartTime = Math.floor(Date.now() / 1000);
+
+      const btn = document.getElementById('btnForceReload');
+      const banner = document.getElementById('forceSyncBanner');
+      const title = document.getElementById('forceSyncTitle');
+      const desc = document.getElementById('forceSyncDesc');
+      const progress = document.getElementById('forceSyncProgress');
+      const icon = document.getElementById('forceSyncIcon');
+
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-inline"></span> Vynucujem načítanie...';
+      }
+
+      if (banner) {
+        banner.className = 'force-sync-banner syncing';
+        banner.style.display = 'flex';
+        if (icon) icon.textContent = '📡';
+        if (title) title.textContent = 'Vynucovanie načítania zo zariadení:';
+        if (desc) desc.textContent = 'Odoslaná požiadavka na všetky tablety. Čakám na odpovede tabletov v reálnom čase...';
+        if (progress) progress.textContent = '0 odpovedí...';
+      }
+
+      showToast('⚡ Vynútené obnovenie spustené: Odoslaná požiadavka do celej flotily.');
+
+      let totalActive = 0;
+      try {
+        const res = await fetch('index.php?ajax=force_sync', {
+          method: 'POST',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+        const data = await res.json();
+        if (data.force_sync_timestamp) {
+          syncStartTime = data.force_sync_timestamp;
+        }
+        totalActive = data.active_devices_count || 0;
+      } catch (e) {
+        console.error('Error broadcasting force sync:', e);
+      }
+
+      let attempts = 0;
+      const maxAttempts = 15;
+      const respondedDeviceIds = new Set();
+
+      fleetSyncInterval = setInterval(async function() {
+        attempts++;
+        try {
+          const res = await fetch('index.php?ajax=get_devices', {
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+          });
+          const data = await res.json();
+          if (data && data.devices) {
+            totalActive = data.devices.filter(d => d.is_active).length;
+
+            // Update Metric Cards
+            const metricTotal = document.getElementById('metricTotalTablets');
+            const metricOnline = document.getElementById('metricTotalOnline');
+            const metricOffline = document.getElementById('metricTotalOffline');
+            const metricLow = document.getElementById('metricTotalLowBattery');
+            const lowCard = document.getElementById('metricLowBatteryCard');
+            const lowIcon = document.getElementById('metricLowBatteryIcon');
+
+            if (metricTotal) metricTotal.textContent = data.total_registered;
+            if (metricOnline) metricOnline.textContent = data.total_online;
+            if (metricOffline) metricOffline.textContent = data.total_offline;
+            if (metricLow) {
+              metricLow.textContent = data.total_low_battery;
+              metricLow.style.color = data.total_low_battery > 0 ? 'var(--danger)' : '';
+            }
+            if (lowCard) {
+              if (data.total_low_battery > 0) lowCard.classList.add('alert-card');
+              else lowCard.classList.remove('alert-card');
+            }
+            if (lowIcon) {
+              lowIcon.textContent = data.total_low_battery > 0 ? '⚠️' : '🔋';
+            }
+
+            // Update Filter Buttons Text
+            const fAll = document.querySelector('.btn-filter[data-filter="all"]');
+            const fLow = document.querySelector('.btn-filter[data-filter="low"]');
+            const fOff = document.querySelector('.btn-filter[data-filter="offline"]');
+            const fChg = document.querySelector('.btn-filter[data-filter="charging"]');
+            if (fAll) fAll.textContent = `All (${data.total_registered})`;
+            if (fLow) fLow.textContent = `Low Battery (${data.total_low_battery})`;
+            if (fOff) fOff.textContent = `Offline (${data.total_offline})`;
+            if (fChg) fChg.textContent = `Charging (${data.total_charging})`;
+
+            // Update Table Rows
+            data.devices.forEach(function(dev) {
+              const row = document.querySelector(`tr[data-device-id="${dev.device_id.toLowerCase()}"]`);
+              if (row) {
+                row.setAttribute('data-low', dev.is_low_battery ? '1' : '0');
+                row.setAttribute('data-online', dev.is_online ? '1' : '0');
+                row.setAttribute('data-charging', dev.is_charging ? '1' : '0');
+
+                if (dev.is_low_battery) {
+                  row.classList.add('row-low-battery');
+                } else {
+                  row.classList.remove('row-low-battery');
+                }
+
+                const barFill = row.querySelector('.battery-bar-fill');
+                const barText = row.querySelector('.battery-text');
+                if (barFill && barText) {
+                  barFill.className = 'battery-bar-fill ' + (dev.is_low_battery ? 'fill-danger' : (dev.battery_level <= 40 ? 'fill-warn' : 'fill-good'));
+                  barFill.style.width = (dev.battery_level !== null ? Math.max(5, dev.battery_level) : 0) + '%';
+                  barText.className = 'battery-text ' + (dev.is_low_battery ? 'text-danger' : (dev.battery_level <= 40 ? 'text-warn' : 'text-good'));
+                  barText.textContent = dev.battery_level !== null ? (dev.battery_level + '%') : 'N/A';
+                }
+
+                const chargingCell = row.cells[3];
+                if (chargingCell) {
+                  chargingCell.innerHTML = dev.is_charging
+                    ? '<span class="badge-charging">⚡ Charging</span>'
+                    : '<span class="badge-discharging">🔋 On Battery</span>';
+                }
+
+                const contactDiv = row.querySelector('.time-contact');
+                const exactDiv = row.querySelector('.time-exact');
+                if (contactDiv) contactDiv.textContent = dev.relative_time;
+                if (exactDiv && dev.last_reported_at) exactDiv.textContent = dev.last_reported_at;
+
+                const statusCell = row.cells[5];
+                if (statusCell) {
+                  statusCell.innerHTML = dev.is_online
+                    ? '<span class="status-pill online"><span class="status-dot"></span> Online</span>'
+                    : '<span class="status-pill offline"><span class="status-dot"></span> Offline</span>';
+                }
+
+                if (dev.last_reported_timestamp >= syncStartTime) {
+                  if (!respondedDeviceIds.has(dev.device_id)) {
+                    respondedDeviceIds.add(dev.device_id);
+                    row.classList.remove('row-just-updated');
+                    void row.offsetWidth; // trigger CSS animation restart
+                    row.classList.add('row-just-updated');
+                  }
+                }
+              }
+            });
+
+            if (progress) {
+              progress.textContent = `${respondedDeviceIds.size} / ${totalActive} odpovedalo`;
+            }
+
+            if (totalActive > 0 && respondedDeviceIds.size >= totalActive) {
+              endFleetSync(true, respondedDeviceIds.size, totalActive);
+              return;
+            }
+          }
+        } catch (err) {
+          console.error('Error polling devices during force sync:', err);
+        }
+
+        if (attempts >= maxAttempts) {
+          endFleetSync(false, respondedDeviceIds.size, totalActive);
+        }
+      }, 1000);
+    }
+
+    function endFleetSync(allResponded, count, total) {
+      clearInterval(fleetSyncInterval);
+      isFleetSyncing = false;
+
+      const btn = document.getElementById('btnForceReload');
+      const banner = document.getElementById('forceSyncBanner');
+      const title = document.getElementById('forceSyncTitle');
+      const desc = document.getElementById('forceSyncDesc');
+      const progress = document.getElementById('forceSyncProgress');
+      const icon = document.getElementById('forceSyncIcon');
+
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '⚡ Vynútiť načítanie zo zariadení';
+      }
+
+      if (banner) {
+        banner.className = 'force-sync-banner';
+        if (icon) icon.textContent = '✓';
+        if (title) title.textContent = 'Aktualizácia dokončená:';
+        if (desc) desc.textContent = count > 0 
+          ? `Úspešne prijaté čerstvé dáta z ${count} zariadení v reálnom čase!` 
+          : 'Žiadne zariadenie v tejto chvíli neodpovedalo (uistite sa, že aplikácia TabMonitor na tabletoch beží).';
+        if (progress) progress.textContent = `${count} / ${total} zariadení`;
+      }
+
+      showToast(`✓ Vynútené načítanie dokončené (${count} tabletov odpovedalo).`);
+    }
 
     function toggleAddDeviceForm(show) {
       const card = document.getElementById('addDeviceCard');

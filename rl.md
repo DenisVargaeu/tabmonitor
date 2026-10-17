@@ -45,6 +45,10 @@
 
 ### 💻 3. Teacher Web Dashboard (Phase 2)
 
+* **⚡ Fleet Force Reload & Live Telemetry Acquisition (`index.php`):**
+  * Added `⚡ Vynútiť načítanie zo zariadení` toolbar button that broadcasts an immediate sync command across all tablets.
+  * Active tablets polling the server detect the signal within seconds and immediately push fresh telemetry.
+  * Web dashboard live-polls and updates table rows, battery gauges, and metric counters in real-time with green pulse animations (`row-just-updated`) as each tablet answers.
 * **Fleet Reporting Interval Control (`settings.php`):**
   * Teachers can configure the reporting frequency for the entire tablet fleet (5–60 min, default 15 min).
   * Quick-select preset buttons (`5m`, `10m`, `15m`, `30m`, `60m`) with interactive slider in web admin settings.
