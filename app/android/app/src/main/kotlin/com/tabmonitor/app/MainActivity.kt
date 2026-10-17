@@ -84,37 +84,6 @@ class MainActivity: FlutterActivity() {
                     val isConnected = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
                     result.success(isConnected)
                 }
-                "showStatusNotification" -> {
-                    try {
-                        val deviceId = call.argument<String>("deviceId") ?: "Tablet"
-                        val batteryLevel = call.argument<Int>("batteryLevel") ?: 100
-                        val isCharging = call.argument<Boolean>("isCharging") ?: false
-                        val isOnline = call.argument<Boolean>("isOnline") ?: true
-                        val statusMessage = call.argument<String>("statusMessage") ?: ""
-                        val nextReportSeconds = call.argument<Int>("nextReportSeconds") ?: 300
-
-                        TabMonitorNotificationManager.updateStatusNotification(
-                            this,
-                            deviceId,
-                            batteryLevel,
-                            isCharging,
-                            isOnline,
-                            statusMessage,
-                            nextReportSeconds
-                        )
-                        result.success(true)
-                    } catch (e: Exception) {
-                        result.error("ERROR", e.message, null)
-                    }
-                }
-                "cancelStatusNotification" -> {
-                    try {
-                        TabMonitorNotificationManager.cancelStatusNotification(this)
-                        result.success(true)
-                    } catch (e: Exception) {
-                        result.error("ERROR", e.message, null)
-                    }
-                }
                 else -> result.notImplemented()
             }
         }

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/models/device_config.dart';
 import 'package:app/models/api_response.dart';
+import 'package:app/services/system_settings_service.dart';
 import 'package:app/main.dart';
 
 void main() {
@@ -97,5 +98,46 @@ void main() {
     expect(find.text('Tablet ID'), findsOneWidget);
     expect(find.text('Test Connection'), findsOneWidget);
     expect(find.text('Zoznam povolení a nastavení'), findsOneWidget);
+  });
+
+  group('SystemSettingsService Tests', () {
+    test('showStatusNotification and cancelStatusNotification invoke channel correctly', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      final List<MethodCall> calls = [];
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('com.tabmonitor.app/settings'),
+        (MethodCall call) async {
+          calls.add(call);
+          return true;
+        },
+      );
+
+      final settings = SystemSettingsService();
+
+      await settings.showStatusNotification(
+        deviceId: 'XX-01',
+        batteryLevel: 85,
+        isCharging: true,
+        isOnline: true,
+        statusMessage: 'Sync OK',
+        nextReportSeconds: 300,
+      );
+
+      expect(calls.length, equals(1));
+      expect(calls.first.method, equals('showStatusNotification'));
+      expect(calls.first.arguments, equals({
+        'deviceId': 'XX-01',
+        'batteryLevel': 85,
+        'isCharging': true,
+        'isOnline': true,
+        'statusMessage': 'Sync OK',
+        'nextReportSeconds': 300,
+      }));
+
+      await settings.cancelStatusNotification();
+      expect(calls.length, equals(2));
+      expect(calls.last.method, equals('cancelStatusNotification'));
+    });
   });
 }
