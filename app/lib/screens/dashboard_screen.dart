@@ -7,6 +7,7 @@ import '../services/battery_service.dart';
 import '../services/storage_service.dart';
 import 'background_info_sheet.dart';
 import 'setup_screen.dart';
+import '../widgets/permissions_checklist.dart';
 
 /// Main status screen for the Lenovo Tab K11 tablet.
 class DashboardScreen extends StatefulWidget {
@@ -483,6 +484,17 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
+              const SizedBox(height: 10),
+
+              OutlinedButton.icon(
+                onPressed: () => _showPermissionsChecklistModal(context),
+                icon: const Icon(Icons.checklist_rtl_rounded),
+                label: const Text('Zoznam systémových povolení (❌ / ✔️)'),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
               const SizedBox(height: 20),
 
               // Background Execution Summary
@@ -543,6 +555,57 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           ),
         ),
       ],
+    );
+  }
+
+  void _showPermissionsChecklistModal(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        maxChildSize: 0.95,
+        minChildSize: 0.5,
+        expand: false,
+        builder: (ctx, scrollController) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+          child: ListView(
+            controller: scrollController,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade400,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              PermissionsChecklist(
+                isServerVerified: _lastReportSuccess == true,
+                onTestServerConnection: () {
+                  Navigator.of(ctx).pop();
+                  _sendBatteryReport(silent: false);
+                },
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.of(ctx).pop(),
+                icon: const Icon(Icons.check),
+                label: const Text('Hotovo'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(46),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

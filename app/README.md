@@ -20,7 +20,19 @@ The application monitors the tablet's battery percentage and charging status, co
      - Network errors / Timeouts: Clear diagnostics.
    - **Secure Storage**: Credentials are encrypted using `flutter_secure_storage` backed by the Android Keystore, with automatic fallback for maximum hardware compatibility.
 
-2. **Live Tablet Dashboard**
+2. **System Permissions & Settings Checklist (Zoznam povolení a nastavení)**
+   - Live checklist with direct Android settings navigation and status indicators:
+     - **✔️ Green Checkmark**: Granted / Configured.
+     - **❌ Red Cross**: Missing / Disabled.
+   - Click any item to jump directly to that Android screen:
+     - **Battery Optimization**: Opens prompt to exempt TabMonitor from battery optimization (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`).
+     - **System Notifications**: Opens app notification toggles (`ACTION_APP_NOTIFICATION_SETTINGS`).
+     - **Internet / Wi-Fi**: Opens network settings (`ACTION_WIFI_SETTINGS`).
+     - **Lenovo Background Activity**: Opens App Details to toggle off "Pause app activity if unused" (`ACTION_APPLICATION_DETAILS_SETTINGS`).
+     - **Server Verification**: Live test connection status with the backend.
+   - Automatically re-evaluates all permissions and updates ❌ to ✔️ when returning from Android Settings.
+
+3. **Live Tablet Dashboard**
    - Large, color-coded battery gauge:
      - **Green**: > 35%
      - **Amber**: 21% - 35%

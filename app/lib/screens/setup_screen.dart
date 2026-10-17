@@ -6,6 +6,7 @@ import '../services/api_service.dart';
 import '../services/background_service.dart';
 import '../services/battery_service.dart';
 import '../services/storage_service.dart';
+import '../widgets/permissions_checklist.dart';
 import 'dashboard_screen.dart';
 
 /// Setup screen displayed on first launch or when editing configuration.
@@ -321,6 +322,13 @@ class _SetupScreenState extends State<SetupScreen> {
                   _buildTestResultCard(_lastTestResult!),
                   const SizedBox(height: 16),
                 ],
+
+                // Permissions & System Checklist
+                PermissionsChecklist(
+                  isServerVerified: _lastTestResult?.isSuccess == true,
+                  onTestServerConnection: _handleTestConnection,
+                ),
+                const SizedBox(height: 20),
 
                 // Save Button
                 FilledButton.icon(

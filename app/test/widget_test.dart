@@ -1,4 +1,6 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/models/device_config.dart';
 import 'package:app/models/api_response.dart';
 import 'package:app/main.dart';
@@ -79,12 +81,21 @@ void main() {
   });
 
   testWidgets('App renders SetupScreen when unconfigured', (WidgetTester tester) async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('com.tabmonitor.app/settings'),
+      (MethodCall methodCall) async => false,
+    );
+
     await tester.pumpWidget(const TabMonitorApp(initialConfig: null));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(find.text('TabMonitor Setup'), findsOneWidget);
     expect(find.text('Server URL'), findsOneWidget);
     expect(find.text('Tablet ID'), findsOneWidget);
     expect(find.text('Test Connection'), findsOneWidget);
+    expect(find.text('Zoznam povolení a nastavení'), findsOneWidget);
   });
 }
