@@ -61,6 +61,12 @@ function send_json_response(int $statusCode, array $data): void
     header('X-Frame-Options: DENY');
     header('Referrer-Policy: no-referrer');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    if (defined('TABMONITOR_VERSION')) {
+        header('X-TabMonitor-Version: ' . TABMONITOR_VERSION);
+        if (!isset($data['version'])) {
+            $data['version'] = TABMONITOR_VERSION;
+        }
+    }
 
     echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;

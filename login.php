@@ -96,6 +96,7 @@ $redirectTarget = htmlspecialchars($_GET['redirect'] ?? '', ENT_QUOTES, 'UTF-8')
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Teacher Login - TabMonitor</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="login-body">
@@ -103,7 +104,7 @@ $redirectTarget = htmlspecialchars($_GET['redirect'] ?? '', ENT_QUOTES, 'UTF-8')
   <div class="login-card">
     <div class="login-header">
       <div class="brand" style="justify-content: center; font-size: 1.6rem;">
-        <span class="brand-icon">📱</span> TabMonitor
+        <span class="brand-icon">📱</span> TabMonitor <span class="version-badge">v<?= TABMONITOR_VERSION ?></span>
       </div>
       <h1 class="login-title">Teacher Portal</h1>
       <p class="login-subtitle">Sign in to monitor tablet battery levels & status</p>
@@ -157,6 +158,10 @@ $redirectTarget = htmlspecialchars($_GET['redirect'] ?? '', ENT_QUOTES, 'UTF-8')
     <div class="login-hint">
       <strong>Initial Setup:</strong> Default login is <code>teacher</code> / <code>teacher123</code>. You can change your password anytime under Settings.
     </div>
+  </div>
+
+  <div style="text-align: center; margin-top: 1.5rem; font-size: 0.85rem; color: var(--text-muted);">
+    TabMonitor Web Admin <strong>v<?= TABMONITOR_VERSION ?></strong>
   </div>
 
 </body>

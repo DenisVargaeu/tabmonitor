@@ -166,6 +166,7 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TabMonitor - Teacher Dashboard</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -174,7 +175,7 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
   <header class="navbar">
     <div class="nav-container">
       <a href="index.php" class="brand">
-        <span class="brand-icon">📱</span> TabMonitor
+        <span class="brand-icon">📱</span> TabMonitor <span class="version-badge">v<?= TABMONITOR_VERSION ?></span>
       </a>
 
       <nav>
@@ -655,6 +656,17 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
       }
     }
   </script>
+
+  <!-- Web Admin Footer -->
+  <footer class="app-footer">
+    <div class="footer-content">
+      <span>TabMonitor Web Admin <strong>v<?= TABMONITOR_VERSION ?></strong></span>
+      <span class="footer-dot">•</span>
+      <span>Tablet Agent <strong>v<?= TABMONITOR_VERSION ?></strong></span>
+      <span class="footer-dot">•</span>
+      <span>PHP <?= PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION ?></span>
+    </div>
+  </footer>
 
 </body>
 </html>

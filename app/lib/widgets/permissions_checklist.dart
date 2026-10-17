@@ -25,10 +25,10 @@ class _PermissionsChecklistState extends State<PermissionsChecklist> with Widget
   bool _isBatteryIgnored = false;
   bool _areNotificationsEnabled = false;
   bool _isNetworkConnected = false;
-  bool _isLenovoAppDetailsOpened = false;
+  bool _isAppDetailsOpened = false;
   bool _isLoading = true;
 
-  static const String _prefLenovoDetails = 'tm_lenovo_details_opened';
+  static const String _prefAppDetails = 'tm_app_details_opened';
 
   @override
   void initState() {
@@ -61,14 +61,14 @@ class _PermissionsChecklistState extends State<PermissionsChecklist> with Widget
       final network = await _settingsService.isNetworkConnected();
 
       final prefs = await SharedPreferences.getInstance();
-      final lenovoOpened = prefs.getBool(_prefLenovoDetails) ?? false;
+      final detailsOpened = prefs.getBool(_prefAppDetails) ?? false;
 
       if (!mounted) return;
       setState(() {
         _isBatteryIgnored = batteryIgnored;
         _areNotificationsEnabled = notifications;
         _isNetworkConnected = network;
-        _isLenovoAppDetailsOpened = lenovoOpened;
+        _isAppDetailsOpened = detailsOpened;
       });
     } catch (_) {
       // Safe fallback
@@ -91,10 +91,10 @@ class _PermissionsChecklistState extends State<PermissionsChecklist> with Widget
     await _settingsService.openWifiSettings();
   }
 
-  Future<void> _handleLenovoTap() async {
+  Future<void> _handleAppDetailsTap() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_prefLenovoDetails, true);
-    setState(() => _isLenovoAppDetailsOpened = true);
+    await prefs.setBool(_prefAppDetails, true);
+    setState(() => _isAppDetailsOpened = true);
     await _settingsService.openAppDetailsSettings();
   }
 
@@ -188,15 +188,15 @@ class _PermissionsChecklistState extends State<PermissionsChecklist> with Widget
               onTap: _handleNetworkTap,
             ),
 
-            // 4. Lenovo Power Management & Activity Pause
+            // 4. Device Power Management & Activity Pause
             _buildChecklistItem(
               icon: Icons.tune_rounded,
-              title: 'Lenovo Správa napájania',
+              title: 'Správa napájania zariadenia',
               description: 'Vypnúť "Pozastaviť aktivitu aplikácie pri nepoužívaní".',
-              isGranted: _isLenovoAppDetailsOpened,
+              isGranted: _isAppDetailsOpened,
               grantedLabel: 'Nastavenia skontrolované',
               missingLabel: 'Skontrolovať v detailoch aplikácie',
-              onTap: _handleLenovoTap,
+              onTap: _handleAppDetailsTap,
             ),
 
             // 5. Server Test Connection Status

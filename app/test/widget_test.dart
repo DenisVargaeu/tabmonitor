@@ -1,9 +1,11 @@
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/models/device_config.dart';
 import 'package:app/models/api_response.dart';
 import 'package:app/services/system_settings_service.dart';
+import 'package:app/widgets/m3_shape_morph_loader.dart';
 import 'package:app/main.dart';
 
 void main() {
@@ -52,20 +54,24 @@ void main() {
     test('ApiTestResult factory constructors work as expected', () {
       final success = ApiTestResult.success(
         message: 'Tablet verified',
-        deviceName: 'Lenovo K11 01',
+        deviceName: 'Test Tablet 01',
         isActive: true,
         statusCode: 200,
+        serverVersion: '2.1.0',
       );
       expect(success.isSuccess, isTrue);
-      expect(success.deviceName, equals('Lenovo K11 01'));
+      expect(success.deviceName, equals('Test Tablet 01'));
       expect(success.statusCode, equals(200));
+      expect(success.serverVersion, equals('2.1.0'));
 
       final failure = ApiTestResult.failure(
         message: 'Unauthorized',
         statusCode: 401,
+        serverVersion: '2.1.0',
       );
       expect(failure.isSuccess, isFalse);
       expect(failure.statusCode, equals(401));
+      expect(failure.serverVersion, equals('2.1.0'));
     });
 
     test('ApiReportResult factory constructors work as expected', () {
@@ -74,10 +80,12 @@ void main() {
         isLowBattery: false,
         threshold: 20,
         statusCode: 200,
+        serverVersion: '2.1.0',
       );
       expect(report.isSuccess, isTrue);
       expect(report.isLowBattery, isFalse);
       expect(report.threshold, equals(20));
+      expect(report.serverVersion, equals('2.1.0'));
     });
   });
 
@@ -86,22 +94,52 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       const MethodChannel('com.tabmonitor.app/settings'),
-      (MethodCall methodCall) async => false,
+      (MethodCall methodCall) async {
+        if (methodCall.method == 'getDeviceInfo') {
+          return {
+            'manufacturer': 'Google',
+            'model': 'Pixel Tablet',
+            'release': '15',
+            'sdkInt': 35,
+          };
+        }
+        return false;
+      },
     );
 
     await tester.pumpWidget(const TabMonitorApp(initialConfig: null));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('TabMonitor Setup'), findsOneWidget);
+    expect(find.text('TabMonitor Sprievodca'), findsOneWidget);
+    expect(find.text('v2.1.0'), findsOneWidget);
     expect(find.text('Server URL'), findsOneWidget);
-    expect(find.text('Tablet ID'), findsOneWidget);
-    expect(find.text('Test Connection'), findsOneWidget);
-    expect(find.text('Zoznam povolení a nastavení'), findsOneWidget);
+    expect(find.text('Zdieľaný API kľúč'), findsOneWidget);
+    expect(find.text('Otestovať spojenie'), findsOneWidget);
+    expect(find.text('Ďalej'), findsOneWidget);
+  });
+
+  testWidgets('M3ShapeMorphLoader renders and animates', (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: M3ShapeMorphLoader(size: 64, label: 'Test Loader'),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Test Loader'), findsOneWidget);
+    expect(find.byType(M3ShapeMorphLoader), findsOneWidget);
+
+    // Pump frames to verify morph animation runs smoothly
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 1000));
   });
 
   group('SystemSettingsService Tests', () {
-    test('showStatusNotification and cancelStatusNotification invoke channel correctly', () async {
+    test('showStatusNotification, cancelStatusNotification, and getDeviceInfo invoke channel correctly', () async {
       TestWidgetsFlutterBinding.ensureInitialized();
       final List<MethodCall> calls = [];
 
@@ -109,6 +147,14 @@ void main() {
         const MethodChannel('com.tabmonitor.app/settings'),
         (MethodCall call) async {
           calls.add(call);
+          if (call.method == 'getDeviceInfo') {
+            return {
+              'manufacturer': 'Google',
+              'model': 'Pixel Tablet',
+              'release': '15',
+              'sdkInt': 35,
+            };
+          }
           return true;
         },
       );
@@ -138,6 +184,10 @@ void main() {
       await settings.cancelStatusNotification();
       expect(calls.length, equals(2));
       expect(calls.last.method, equals('cancelStatusNotification'));
+
+      final info = await settings.getDeviceInfo();
+      expect(info['model'], equals('Pixel Tablet'));
+      expect(calls.length, equals(3));
     });
   });
 }

@@ -1,7 +1,7 @@
 import 'package:flutter/services.dart';
 
-/// Service interfacing with native Android 15 platform methods for checking
-/// and configuring system permissions, battery optimizations, and app settings.
+/// Service interfacing with native Android platform methods for checking
+/// and configuring system permissions, battery optimizations, notifications, and device details.
 class SystemSettingsService {
   static const MethodChannel _channel = MethodChannel('com.tabmonitor.app/settings');
 
@@ -60,6 +60,44 @@ class SystemSettingsService {
       return res ?? false;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// Show or update the ongoing status notification with connection state and countdown.
+  Future<void> showStatusNotification({
+    required String deviceId,
+    required int batteryLevel,
+    required bool isCharging,
+    required bool isOnline,
+    required String statusMessage,
+    required int nextReportSeconds,
+  }) async {
+    try {
+      await _channel.invokeMethod('showStatusNotification', {
+        'deviceId': deviceId,
+        'batteryLevel': batteryLevel,
+        'isCharging': isCharging,
+        'isOnline': isOnline,
+        'statusMessage': statusMessage,
+        'nextReportSeconds': nextReportSeconds,
+      });
+    } catch (_) {}
+  }
+
+  /// Cancel the ongoing status notification.
+  Future<void> cancelStatusNotification() async {
+    try {
+      await _channel.invokeMethod('cancelStatusNotification');
+    } catch (_) {}
+  }
+
+  /// Get real Android device info (Model, Manufacturer, Brand, Android Release, SDK).
+  Future<Map<String, dynamic>> getDeviceInfo() async {
+    try {
+      final res = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+      return res ?? {};
+    } catch (_) {
+      return {};
     }
   }
 }

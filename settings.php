@@ -129,6 +129,7 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Settings - TabMonitor</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -137,7 +138,7 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
   <header class="navbar">
     <div class="nav-container">
       <a href="index.php" class="brand">
-        <span class="brand-icon">📱</span> TabMonitor
+        <span class="brand-icon">📱</span> TabMonitor <span class="version-badge">v<?= TABMONITOR_VERSION ?></span>
       </a>
 
       <nav>
@@ -323,6 +324,14 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
 
           <ul class="info-list">
             <li class="info-item">
+              <span class="info-label">Web Admin</span>
+              <span class="info-val"><strong>v<?= TABMONITOR_VERSION ?></strong></span>
+            </li>
+            <li class="info-item">
+              <span class="info-label">API Protocol</span>
+              <span class="info-val"><strong>v<?= TABMONITOR_VERSION ?></strong></span>
+            </li>
+            <li class="info-item">
               <span class="info-label">Environment</span>
               <span class="info-val">Webglobe Shared</span>
             </li>
@@ -361,8 +370,15 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
 
   </main>
 
-  <footer class="footer">
-    TabMonitor &bull; Teacher Portal &bull; Clean &amp; Lightweight PHP Backend
+  <!-- Web Admin Footer -->
+  <footer class="app-footer">
+    <div class="footer-content">
+      <span>TabMonitor Web Admin <strong>v<?= TABMONITOR_VERSION ?></strong></span>
+      <span class="footer-dot">•</span>
+      <span>Tablet Agent <strong>v<?= TABMONITOR_VERSION ?></strong></span>
+      <span class="footer-dot">•</span>
+      <span>PHP <?= PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION ?></span>
+    </div>
   </footer>
 
 </body>

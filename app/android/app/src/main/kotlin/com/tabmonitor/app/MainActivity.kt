@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
@@ -83,6 +84,49 @@ class MainActivity: FlutterActivity() {
                     val capabilities = cm.getNetworkCapabilities(network)
                     val isConnected = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
                     result.success(isConnected)
+                }
+                "showStatusNotification" -> {
+                    try {
+                        val deviceId = call.argument<String>("deviceId") ?: "Zariadenie"
+                        val batteryLevel = call.argument<Int>("batteryLevel") ?: 100
+                        val isCharging = call.argument<Boolean>("isCharging") ?: false
+                        val isOnline = call.argument<Boolean>("isOnline") ?: true
+                        val statusMessage = call.argument<String>("statusMessage") ?: ""
+                        val nextReportSeconds = call.argument<Int>("nextReportSeconds") ?: 300
+
+                        TabMonitorNotificationManager.updateStatusNotification(
+                            this,
+                            deviceId,
+                            batteryLevel,
+                            isCharging,
+                            isOnline,
+                            statusMessage,
+                            nextReportSeconds
+                        )
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
+                "cancelStatusNotification" -> {
+                    try {
+                        TabMonitorNotificationManager.cancelStatusNotification(this)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("ERROR", e.message, null)
+                    }
+                }
+                "getDeviceInfo" -> {
+                    val info = mapOf(
+                        "model" to Build.MODEL,
+                        "manufacturer" to Build.MANUFACTURER,
+                        "brand" to Build.BRAND,
+                        "device" to Build.DEVICE,
+                        "product" to Build.PRODUCT,
+                        "release" to Build.VERSION.RELEASE,
+                        "sdkInt" to Build.VERSION.SDK_INT
+                    )
+                    result.success(info)
                 }
                 else -> result.notImplemented()
             }

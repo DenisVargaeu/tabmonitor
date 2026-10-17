@@ -1,15 +1,15 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../models/api_response.dart';
 import '../models/device_config.dart';
 import '../services/api_service.dart';
 import '../services/background_service.dart';
-import '../services/battery_service.dart';
 import '../services/storage_service.dart';
+import '../services/system_settings_service.dart';
+import '../widgets/m3_shape_morph_loader.dart';
 import '../widgets/permissions_checklist.dart';
 import 'dashboard_screen.dart';
 
-/// Setup screen displayed on first launch or when editing configuration.
+/// Multi-step Material 3 setup wizard for configuring TabMonitor on any Android device.
 class SetupScreen extends StatefulWidget {
   final DeviceConfig? initialConfig;
   final bool isEditing;
@@ -25,7 +25,13 @@ class SetupScreen extends StatefulWidget {
 }
 
 class _SetupScreenState extends State<SetupScreen> {
-  final _formKey = GlobalKey<FormState>();
+  final PageController _pageController = PageController();
+  int _currentStep = 0;
+  static const int _totalSteps = 4;
+
+  final _formKeyStep1 = GlobalKey<FormState>();
+  final _formKeyStep2 = GlobalKey<FormState>();
+
   late final TextEditingController _urlController;
   late final TextEditingController _apiKeyController;
   late final TextEditingController _deviceIdController;
@@ -35,8 +41,13 @@ class _SetupScreenState extends State<SetupScreen> {
   bool _isSaving = false;
   ApiTestResult? _lastTestResult;
 
+  // Real hardware device info detected from native Android
+  Map<String, dynamic> _deviceInfo = {};
+  bool _isLoadingDeviceInfo = true;
+
   final ApiService _apiService = ApiService();
   final StorageService _storageService = StorageService();
+  final SystemSettingsService _settingsService = SystemSettingsService();
 
   @override
   void initState() {
@@ -44,15 +55,34 @@ class _SetupScreenState extends State<SetupScreen> {
     _urlController = TextEditingController(text: widget.initialConfig?.serverUrl ?? '');
     _apiKeyController = TextEditingController(text: widget.initialConfig?.apiKey ?? '');
     _deviceIdController = TextEditingController(text: widget.initialConfig?.deviceId ?? '');
+
+    _loadNativeDeviceInfo();
   }
 
   @override
   void dispose() {
+    _pageController.dispose();
     _urlController.dispose();
     _apiKeyController.dispose();
     _deviceIdController.dispose();
     _apiService.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadNativeDeviceInfo() async {
+    try {
+      final info = await _settingsService.getDeviceInfo();
+      if (mounted) {
+        setState(() {
+          _deviceInfo = info;
+          _isLoadingDeviceInfo = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _isLoadingDeviceInfo = false);
+      }
+    }
   }
 
   DeviceConfig _buildCurrentConfig() {
@@ -64,7 +94,7 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   Future<void> _handleTestConnection() async {
-    if (!_formKey.currentState!.validate()) {
+    if (!_formKeyStep1.currentState!.validate()) {
       return;
     }
 
@@ -83,67 +113,50 @@ class _SetupScreenState extends State<SetupScreen> {
     });
   }
 
+  void _nextStep() {
+    if (_currentStep == 0) {
+      if (!_formKeyStep1.currentState!.validate()) return;
+    } else if (_currentStep == 1) {
+      if (!_formKeyStep2.currentState!.validate()) return;
+    }
+
+    if (_currentStep < _totalSteps - 1) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeInOutCubic,
+      );
+      setState(() => _currentStep++);
+    }
+  }
+
+  void _previousStep() {
+    if (_currentStep > 0) {
+      _pageController.previousPage(
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeInOutCubic,
+      );
+      setState(() => _currentStep--);
+    }
+  }
+
   Future<void> _handleSave() async {
-    if (!_formKey.currentState!.validate()) {
+    if (_urlController.text.trim().isEmpty ||
+        _apiKeyController.text.trim().isEmpty ||
+        _deviceIdController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Vyplňte prosím všetky požadované údaje.')),
+      );
       return;
     }
 
-    // If connection was not tested yet or failed, ask user if they want to test or proceed
-    if (_lastTestResult == null || !_lastTestResult!.isSuccess) {
-      final proceed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Save without verified connection?'),
-          content: const Text(
-            'The connection has not been verified with the server yet. You can still save, but battery reports may fail if credentials or server URL are incorrect.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Back to Test'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Save Anyway'),
-            ),
-          ],
-        ),
-      );
-      if (proceed != true) return;
-    }
-
-    setState(() {
-      _isSaving = true;
-    });
+    setState(() => _isSaving = true);
 
     final config = _buildCurrentConfig();
     await _storageService.saveConfig(config);
-
-    // Schedule background WorkManager tasks
     await BackgroundService().schedulePeriodicReports();
 
-    // Trigger an initial report right away
-    try {
-      final battery = BatteryService();
-      final level = await battery.getBatteryLevel();
-      final isCharging = await battery.isCharging();
-      final reportResult = await _apiService.sendBatteryReport(
-        config: config,
-        batteryLevel: level,
-        isCharging: isCharging,
-      );
-      await _storageService.recordReportResult(
-        batteryLevel: level,
-        isCharging: isCharging,
-        success: reportResult.isSuccess,
-        message: reportResult.message,
-      );
-    } catch (_) {}
-
     if (!mounted) return;
-    setState(() {
-      _isSaving = false;
-    });
+    setState(() => _isSaving = false);
 
     if (widget.isEditing) {
       Navigator.of(context).pop(true);
@@ -154,268 +167,654 @@ class _SetupScreenState extends State<SetupScreen> {
     }
   }
 
+  String get _detectedDeviceName {
+    final manufacturer = _deviceInfo['manufacturer']?.toString() ?? '';
+    final model = _deviceInfo['model']?.toString() ?? '';
+    if (manufacturer.isNotEmpty && model.isNotEmpty) {
+      return '${manufacturer[0].toUpperCase()}${manufacturer.substring(1)} $model';
+    } else if (model.isNotEmpty) {
+      return model;
+    }
+    return 'Android Tablet';
+  }
+
+  String get _detectedAndroidVersion {
+    final release = _deviceInfo['release']?.toString();
+    final sdk = _deviceInfo['sdkInt']?.toString();
+    if (release != null && sdk != null) {
+      return 'Android $release (API $sdk)';
+    } else if (release != null) {
+      return 'Android $release';
+    }
+    return 'Android OS';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.isEditing ? 'Tablet Settings' : 'TabMonitor Setup'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.isEditing ? 'Nastavenia klienta' : 'TabMonitor Sprievodca'),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                'v2.1.0',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onPrimaryContainer,
+                ),
+              ),
+            ),
+          ],
+        ),
         elevation: 0,
         centerTitle: true,
+        leading: widget.isEditing
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              )
+            : null,
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Header banner
-                Card(
-                  elevation: 0,
-                  color: theme.colorScheme.primaryContainer.withOpacity(0.4),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 24,
-                          backgroundColor: theme.colorScheme.primary,
-                          child: const Icon(Icons.tablet_android, color: Colors.white, size: 28),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.isEditing ? 'Configure Tablet Client' : 'Welcome to TabMonitor',
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Connect this Lenovo Tab K11 to your TabMonitor server dashboard.',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
+        child: Column(
+          children: [
+            // M3 Stepper Header
+            _buildStepperHeader(theme),
 
-                // Server URL input
-                TextFormField(
-                  controller: _urlController,
-                  keyboardType: TextInputType.url,
-                  textInputAction: TextInputAction.next,
-                  decoration: InputDecoration(
-                    labelText: 'Server URL',
-                    hintText: 'https://example.com/tabmonitor',
-                    helperText: 'Web address of the TabMonitor server (HTTPS recommended)',
-                    prefixIcon: const Icon(Icons.link),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    suffixIcon: _urlController.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () => setState(() => _urlController.clear()),
-                          )
-                        : null,
-                  ),
-                  onChanged: (_) => setState(() => _lastTestResult = null),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Server URL is required';
-                    }
-                    final v = value.trim();
-                    if (!v.startsWith('http://') && !v.startsWith('https://')) {
-                      return 'URL must start with https:// or http://';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 18),
-
-                // Tablet ID input
-                TextFormField(
-                  controller: _deviceIdController,
-                  textCapitalization: TextCapitalization.characters,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9_\-\.]')),
-                  ],
-                  textInputAction: TextInputAction.next,
-                  decoration: InputDecoration(
-                    labelText: 'Tablet ID',
-                    hintText: 'e.g. TAB-01, XX-01',
-                    helperText: 'Unique identifier pre-registered in teacher dashboard',
-                    prefixIcon: const Icon(Icons.badge_outlined),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  onChanged: (_) => setState(() => _lastTestResult = null),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Tablet ID is required (e.g. TAB-01)';
-                    }
-                    if (value.trim().length > 50) {
-                      return 'Tablet ID must be under 50 characters';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 18),
-
-                // Shared API Key input
-                TextFormField(
-                  controller: _apiKeyController,
-                  obscureText: _obscureApiKey,
-                  textInputAction: TextInputAction.done,
-                  decoration: InputDecoration(
-                    labelText: 'Shared Tablet API Key',
-                    hintText: 'Configured tablet_api_key',
-                    helperText: 'Found in server config.php or installer output',
-                    prefixIcon: const Icon(Icons.key),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                    suffixIcon: IconButton(
-                      icon: Icon(_obscureApiKey ? Icons.visibility_off : Icons.visibility),
-                      onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
-                    ),
-                  ),
-                  onChanged: (_) => setState(() => _lastTestResult = null),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Shared API key is required';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 24),
-
-                // Test Connection Button
-                OutlinedButton.icon(
-                  onPressed: _isTesting ? null : _handleTestConnection,
-                  icon: _isTesting
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.network_check),
-                  label: Text(_isTesting ? 'Testing Connection...' : 'Test Connection'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // Test Result Card
-                if (_lastTestResult != null) ...[
-                  _buildTestResultCard(_lastTestResult!),
-                  const SizedBox(height: 16),
+            // Step Content Pages
+            Expanded(
+              child: PageView(
+                controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(), // Controlled via buttons
+                onPageChanged: (idx) => setState(() => _currentStep = idx),
+                children: [
+                  _buildStep1Server(theme),
+                  _buildStep2Device(theme),
+                  _buildStep3Permissions(theme),
+                  _buildStep4Finish(theme),
                 ],
-
-                // Permissions & System Checklist
-                PermissionsChecklist(
-                  isServerVerified: _lastTestResult?.isSuccess == true,
-                  onTestServerConnection: _handleTestConnection,
-                ),
-                const SizedBox(height: 20),
-
-                // Save Button
-                FilledButton.icon(
-                  onPressed: _isSaving ? null : _handleSave,
-                  icon: _isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.check_circle_outline),
-                  label: Text(_isSaving ? 'Saving...' : (widget.isEditing ? 'Save Changes' : 'Complete Setup')),
-                  style: FilledButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
+
+            // Bottom Navigation Actions
+            _buildBottomBar(theme),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildTestResultCard(ApiTestResult result) {
-    final isSuccess = result.isSuccess;
-    final color = isSuccess ? Colors.green : Colors.red;
+  Widget _buildStepperHeader(ThemeData theme) {
+    const titles = ['Server', 'Zariadenie', 'Povolenia', 'Hotovo'];
+    const icons = [Icons.dns_rounded, Icons.tablet_rounded, Icons.security_rounded, Icons.check_circle_rounded];
 
-    return Card(
-      elevation: 0,
-      color: isSuccess ? Colors.green.shade50 : Colors.red.shade50,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: isSuccess ? Colors.green.shade300 : Colors.red.shade300),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant.withOpacity(0.3))),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
-              isSuccess ? Icons.check_circle : Icons.error_outline,
-              color: color.shade700,
-              size: 24,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isSuccess ? 'Connection Verified' : 'Connection Failed',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: color.shade900,
-                      fontSize: 14,
+      child: Column(
+        children: [
+          Row(
+            children: List.generate(_totalSteps, (i) {
+              final isPassed = i < _currentStep;
+              final isCurrent = i == _currentStep;
+
+              return Expanded(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: isPassed
+                                  ? theme.colorScheme.primary
+                                  : (isCurrent
+                                      ? theme.colorScheme.primaryContainer
+                                      : theme.colorScheme.surfaceContainerHighest),
+                              border: Border.all(
+                                color: isCurrent ? theme.colorScheme.primary : Colors.transparent,
+                                width: 2,
+                              ),
+                            ),
+                            child: Center(
+                              child: isPassed
+                                  ? const Icon(Icons.check, size: 18, color: Colors.white)
+                                  : Icon(
+                                      icons[i],
+                                      size: 16,
+                                      color: isCurrent
+                                          ? theme.colorScheme.primary
+                                          : theme.colorScheme.onSurfaceVariant,
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            titles[i],
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: isCurrent ? FontWeight.bold : FontWeight.w500,
+                              color: isCurrent
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+                    if (i < _totalSteps - 1)
+                      Container(
+                        width: 16,
+                        height: 2,
+                        color: i < _currentStep
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.outlineVariant.withOpacity(0.4),
+                      ),
+                  ],
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: (_currentStep + 1) / _totalSteps,
+              minHeight: 4,
+              backgroundColor: theme.colorScheme.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation<Color>(theme.colorScheme.primary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // STEP 1: SERVER & API KEY
+  Widget _buildStep1Server(ThemeData theme) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Form(
+        key: _formKeyStep1,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: theme.colorScheme.primaryContainer,
+                  child: Icon(Icons.cloud_sync_rounded, color: theme.colorScheme.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Krok 1: Pripojenie k serveru',
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'Zadajte URL adresu servera a zdieľaný kľúč pre tablet.',
+                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    result.message,
-                    style: TextStyle(color: color.shade900, fontSize: 13),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Server URL Field
+            TextFormField(
+              controller: _urlController,
+              keyboardType: TextInputType.url,
+              decoration: InputDecoration(
+                labelText: 'Server URL',
+                hintText: 'http://192.168.1.50:8080 alebo domena.sk',
+                prefixIcon: const Icon(Icons.link_rounded),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                filled: true,
+                fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+              ),
+              validator: (val) {
+                if (val == null || val.trim().isEmpty) {
+                  return 'Zadajte URL adresu servera';
+                }
+                final cleaned = val.trim().toLowerCase();
+                if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
+                  if (!cleaned.contains('.')) {
+                    return 'Zadajte platnú URL adresu alebo IP adresu s portom';
+                  }
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // API Key Field
+            TextFormField(
+              controller: _apiKeyController,
+              obscureText: _obscureApiKey,
+              decoration: InputDecoration(
+                labelText: 'Zdieľaný API kľúč',
+                hintText: 'Kľúč z config.php na serveri',
+                prefixIcon: const Icon(Icons.key_rounded),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureApiKey ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                  onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
+                ),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                filled: true,
+                fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+              ),
+              validator: (val) {
+                if (val == null || val.trim().isEmpty) {
+                  return 'Zadajte API kľúč';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 20),
+
+            // Test Connection Button with M3 Morph Loader
+            OutlinedButton.icon(
+              onPressed: _isTesting ? null : _handleTestConnection,
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              icon: _isTesting
+                  ? const SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: M3ShapeMorphLoader(size: 22, strokeWidth: 2),
+                    )
+                  : const Icon(Icons.network_check_rounded),
+              label: Text(_isTesting ? 'Overujem spojenie so serverom...' : 'Otestovať spojenie'),
+            ),
+
+            if (_lastTestResult != null) ...[
+              const SizedBox(height: 16),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _lastTestResult!.isSuccess ? Colors.green.shade50 : Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: _lastTestResult!.isSuccess ? Colors.green.shade300 : Colors.red.shade300,
                   ),
-                  if (result.deviceName != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      'Registered Device: "${result.deviceName}"',
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: Colors.green.shade900,
-                        fontSize: 12,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _lastTestResult!.isSuccess ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                      color: _lastTestResult!.isSuccess ? Colors.green.shade700 : Colors.red.shade700,
+                      size: 26,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _lastTestResult!.isSuccess ? 'Server odpovedá úspešne!' : 'Chyba spojenia',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: _lastTestResult!.isSuccess ? Colors.green.shade900 : Colors.red.shade900,
+                            ),
+                          ),
+                          Text(
+                            _lastTestResult!.message,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _lastTestResult!.isSuccess ? Colors.green.shade800 : Colors.red.shade800,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                  if (result.statusCode != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      'HTTP Status: ${result.statusCode}',
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  // STEP 2: DEVICE IDENTIFICATION & HARDWARE
+  Widget _buildStep2Device(ThemeData theme) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Form(
+        key: _formKeyStep2,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: theme.colorScheme.primaryContainer,
+                  child: Icon(Icons.devices_rounded, color: theme.colorScheme.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Krok 2: Identifikácia zariadenia',
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        'Zadajte ID tabletu podľa registrácie vo webovom paneli.',
+                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+
+            // Live Detected Hardware Card (Zero hardcoded Lenovo, reads actual device!)
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(Icons.tablet_mac_rounded, color: theme.colorScheme.primary, size: 28),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Tvoje zariadenie',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: theme.colorScheme.primary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _isLoadingDeviceInfo ? 'Zisťujem model...' : _detectedDeviceName,
+                            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            _detectedAndroidVersion,
+                            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
-                ],
+                ),
               ),
+            ),
+            const SizedBox(height: 20),
+
+            // Device ID Input
+            TextFormField(
+              controller: _deviceIdController,
+              textCapitalization: TextCapitalization.characters,
+              decoration: InputDecoration(
+                labelText: 'Tablet ID',
+                hintText: 'napr. XX-01, TAB-02, TAB-15',
+                prefixIcon: const Icon(Icons.badge_rounded),
+                helperText: 'Toto ID musí byť zaregistrované administrátorom na webe.',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                filled: true,
+                fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+              ),
+              validator: (val) {
+                if (val == null || val.trim().isEmpty) {
+                  return 'Zadajte Tablet ID (napr. XX-01)';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 16),
+
+            // Quick Preset ID Chips
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: ['XX-01', 'XX-02', 'TAB-01', 'TAB-02', 'TAB-03'].map((sampleId) {
+                return ActionChip(
+                  label: Text(sampleId),
+                  avatar: const Icon(Icons.add, size: 14),
+                  onPressed: () {
+                    setState(() {
+                      _deviceIdController.text = sampleId;
+                    });
+                  },
+                );
+              }).toList(),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // STEP 3: SYSTEM PERMISSIONS & OPTIMIZATIONS
+  Widget _buildStep3Permissions(ThemeData theme) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: theme.colorScheme.primaryContainer,
+                child: Icon(Icons.security_rounded, color: theme.colorScheme.primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Krok 3: Systémové nastavenia',
+                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                    Text(
+                      'Pre spoľahlivý beh na pozadí povoľte potrebné nastavenia.',
+                      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          PermissionsChecklist(
+            isServerVerified: _lastTestResult?.isSuccess == true,
+            onTestServerConnection: _handleTestConnection,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // STEP 4: REVIEW & FINISH
+  Widget _buildStep4Finish(ThemeData theme) {
+    final config = _buildCurrentConfig();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: theme.colorScheme.primaryContainer,
+              ),
+              child: const M3ShapeMorphLoader(
+                size: 64,
+                strokeWidth: 3.5,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Všetko je pripravené!',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+              color: theme.colorScheme.onSurface,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Skontrolujte zhrnutie konfigurácie pred spustením monitorovania.',
+            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+
+          // Configuration Summary Card
+          Card(
+            elevation: 0,
+            color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  _buildSummaryRow('Tablet ID', config.deviceId.isEmpty ? 'Nezadané' : config.deviceId),
+                  const Divider(height: 16),
+                  _buildSummaryRow('Server', config.serverUrl.isEmpty ? 'Nezadané' : config.serverUrl),
+                  const Divider(height: 16),
+                  _buildSummaryRow('Zariadenie', _detectedDeviceName),
+                  const Divider(height: 16),
+                  _buildSummaryRow('Verzia klienta', 'v2.1.0'),
+                  const Divider(height: 16),
+                  _buildSummaryRow(
+                    'Stav spojenia',
+                    _lastTestResult?.isSuccess == true ? '🟢 Overené' : '🟡 Vyžaduje overenie',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          FilledButton.icon(
+            onPressed: _isSaving ? null : _handleSave,
+            icon: _isSaving
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.rocket_launch_rounded),
+            label: Text(_isSaving ? 'Ukladám...' : 'Spustiť monitorovanie'),
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13, color: Colors.grey)),
+        Flexible(
+          child: Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            textAlign: TextAlign.right,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // BOTTOM NAVIGATION BAR
+  Widget _buildBottomBar(ThemeData theme) {
+    final isFirst = _currentStep == 0;
+    final isLast = _currentStep == _totalSteps - 1;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(top: BorderSide(color: theme.colorScheme.outlineVariant.withOpacity(0.3))),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          if (!isFirst)
+            OutlinedButton.icon(
+              onPressed: _previousStep,
+              icon: const Icon(Icons.arrow_back_rounded, size: 18),
+              label: const Text('Späť'),
+              style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            )
+          else
+            const SizedBox(width: 80),
+
+          if (!isLast)
+            FilledButton.icon(
+              onPressed: _nextStep,
+              label: const Text('Ďalej'),
+              icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+              style: FilledButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            )
+          else
+            const SizedBox.shrink(),
+        ],
       ),
     );
   }

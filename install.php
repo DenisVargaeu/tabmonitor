@@ -274,6 +274,7 @@ $defaultTeacherKey = $_POST['teacher_api_key'] ?? ($existingConfig['security']['
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TabMonitor - Web Installer</title>
+  <link rel="icon" type="image/png" href="favicon.png">
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="login-body" style="padding: 2.5rem 1rem;">
@@ -281,7 +282,7 @@ $defaultTeacherKey = $_POST['teacher_api_key'] ?? ($existingConfig['security']['
   <div class="login-card" style="max-width: 620px;">
     <div class="login-header">
       <div class="brand" style="justify-content: center; font-size: 1.6rem;">
-        <span class="brand-icon">📱</span> TabMonitor Installer
+        <span class="brand-icon">📱</span> TabMonitor Installer <span class="version-badge">v2.1.0</span>
       </div>
       <p class="login-subtitle">Database configuration &amp; automatic table initialization</p>
     </div>

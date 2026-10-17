@@ -7,7 +7,10 @@ declare(strict_types=1);
  * Provides a secure, shared PDO connection using prepared statements
  * without leaking database credentials in exception messages.
  * Supports configurable table prefix ('tab_' by default).
+/**
+ * System Version definition for TabMonitor Web Admin & API
  */
+const TABMONITOR_VERSION = '2.1.0';
 
 /**
  * Returns the PDO database connection singleton.

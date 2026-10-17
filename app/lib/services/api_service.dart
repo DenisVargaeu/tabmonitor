@@ -20,7 +20,8 @@ class ApiService {
       'X-API-Key': apiKey,
       'Authorization': 'Bearer $apiKey',
       'Accept': 'application/json',
-      'User-Agent': 'TabMonitor-Client/1.0 (Lenovo Tab K11; Android 15)',
+      'User-Agent': 'TabMonitor-Client/2.1.0 (Android; Tablet)',
+      'X-Client-Version': '2.1.0',
     };
     if (isJson) {
       headers['Content-Type'] = 'application/json; charset=utf-8';
@@ -52,6 +53,7 @@ class ApiService {
       final serverMessage = data != null && data['message'] != null
           ? data['message'].toString()
           : null;
+      final serverVersion = data?['version']?.toString() ?? response.headers['x-tabmonitor-version'];
 
       if (response.statusCode == 200 && data != null && data['status'] == 'ok') {
         final device = data['device'] as Map<String, dynamic>?;
@@ -63,17 +65,20 @@ class ApiService {
           statusCode: response.statusCode,
           deviceName: name,
           isActive: isActive,
+          serverVersion: serverVersion,
         );
       } else if (response.statusCode == 401) {
         return ApiTestResult.failure(
           message: serverMessage ?? 'Authentication failed: Invalid shared API key.',
           statusCode: 401,
+          serverVersion: serverVersion,
         );
       } else if (response.statusCode == 403) {
         return ApiTestResult.failure(
           message: serverMessage ??
               'Tablet ID "${config.deviceId}" is not pre-registered or is inactive on the server. Please add it to the teacher dashboard first.',
           statusCode: 403,
+          serverVersion: serverVersion,
         );
       } else if (response.statusCode == 404) {
         return ApiTestResult.failure(
@@ -139,6 +144,7 @@ class ApiService {
       final serverMessage = data != null && data['message'] != null
           ? data['message'].toString()
           : null;
+      final serverVersion = data?['version']?.toString() ?? response.headers['x-tabmonitor-version'];
 
       if (response.statusCode == 200 && data != null && data['status'] == 'ok') {
         final isLow = data['is_low_battery'] == true;
@@ -149,21 +155,25 @@ class ApiService {
           statusCode: 200,
           isLowBattery: isLow,
           threshold: threshold,
+          serverVersion: serverVersion,
         );
       } else if (response.statusCode == 401) {
         return ApiReportResult.failure(
           message: serverMessage ?? 'Invalid API key.',
           statusCode: 401,
+          serverVersion: serverVersion,
         );
       } else if (response.statusCode == 403) {
         return ApiReportResult.failure(
           message: serverMessage ?? 'Tablet is not registered or is disabled on server.',
           statusCode: 403,
+          serverVersion: serverVersion,
         );
       } else {
         return ApiReportResult.failure(
           message: serverMessage ?? 'Server HTTP error ${response.statusCode}',
           statusCode: response.statusCode,
+          serverVersion: serverVersion,
         );
       }
     } on TimeoutException {
