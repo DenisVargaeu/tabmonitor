@@ -74,23 +74,27 @@ class BackgroundService {
 
   /// Register periodic background reporting.
   /// Note on Android 15 / Lenovo Tab K11:
-  /// Android enforces a hard minimum periodic interval of 15 minutes.
-  /// While the screen is off and on battery (Doze mode), tasks may be grouped into
-  /// maintenance windows. When the app is in the foreground, TabMonitor also runs
-  /// a live 5-minute timer.
-  Future<void> schedulePeriodicReports() async {
+  /// Default interval is 15 minutes, with option to go down to 5 minutes.
+  /// Android WorkManager enforces a 15-minute floor for background workers,
+  /// while foreground and persistent notification timers trigger at the exact configured interval.
+  Future<void> schedulePeriodicReports({int? intervalMinutes}) async {
     try {
+      final storage = StorageService();
+      final minutes = intervalMinutes ?? await storage.loadReportInterval();
+      final effectiveMinutes = minutes.clamp(5, 120);
+      final workManagerMinutes = effectiveMinutes < 15 ? 15 : effectiveMinutes;
+
       await Workmanager().registerPeriodicTask(
         kBackgroundReportTask,
         kBackgroundReportTask,
-        frequency: const Duration(minutes: 15), // Android minimum
+        frequency: Duration(minutes: workManagerMinutes),
         initialDelay: const Duration(seconds: 30),
         constraints: Constraints(
           networkType: NetworkType.connected,
         ),
-        existingWorkPolicy: ExistingWorkPolicy.keep,
+        existingWorkPolicy: ExistingWorkPolicy.replace,
       );
-      debugPrint('[BackgroundService] Periodic reporting scheduled (15 min interval).');
+      debugPrint('[BackgroundService] Periodic reporting scheduled ($effectiveMinutes min configured, WorkManager: $workManagerMinutes min).');
     } catch (e) {
       debugPrint('[BackgroundService] Error scheduling periodic reports: $e');
     }

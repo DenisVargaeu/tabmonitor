@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/api_response.dart';
 import '../models/device_config.dart';
 import '../services/api_service.dart';
@@ -167,6 +168,315 @@ class _SetupScreenState extends State<SetupScreen> {
     }
   }
 
+  void _openBulkSetupDialog() {
+    final theme = Theme.of(context);
+    final bulkController = TextEditingController();
+    DeviceConfig? parsedConfig;
+    bool isTestingBulk = false;
+    String? errorMessage;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: theme.colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (bottomSheetContext) {
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            final bottomInset = MediaQuery.of(ctx).viewInsets.bottom;
+
+            void updateParsing(String val) {
+              setModalState(() {
+                errorMessage = null;
+                parsedConfig = DeviceConfig.parseBulkSetupCode(val);
+              });
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: bottomInset + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.outlineVariant,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(Icons.flash_on_rounded, color: theme.colorScheme.primary, size: 24),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Hromadné nastavenie (Bulk Setup)',
+                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                              Text(
+                                'Syntax: adresaserveru-tabletkey-tabid',
+                                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close_rounded),
+                          onPressed: () => Navigator.of(ctx).pop(),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: bulkController,
+                      autofocus: true,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        labelText: 'Bulk Setup Kód',
+                        hintText: 'https://skola.sk/tabmonitor-secretkey123-TAB-01',
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        prefixIcon: const Icon(Icons.qr_code_2_rounded),
+                        suffixIcon: IconButton(
+                          tooltip: 'Vložiť zo schránky',
+                          icon: const Icon(Icons.content_paste_rounded),
+                          onPressed: () async {
+                            final data = await Clipboard.getData(Clipboard.kTextPlain);
+                            if (data?.text != null && data!.text!.trim().isNotEmpty) {
+                              bulkController.text = data.text!.trim();
+                              updateParsing(data.text!.trim());
+                            }
+                          },
+                        ),
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceContainerHighest.withOpacity(0.3),
+                      ),
+                      onChanged: updateParsing,
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Live preview of parsed values
+                    if (parsedConfig != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.green.withOpacity(0.3)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                const Icon(Icons.check_circle_rounded, color: Colors.green, size: 18),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Kód bol úspešne rozpoznaný',
+                                  style: TextStyle(
+                                    color: Colors.green.shade800,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const Divider(height: 16),
+                            _buildParsedRow('Server URL:', parsedConfig!.serverUrl, Icons.link_rounded, theme),
+                            const SizedBox(height: 6),
+                            _buildParsedRow('API Kľúč:', '${parsedConfig!.apiKey.substring(0, parsedConfig!.apiKey.length.clamp(0, 8))}••••••••', Icons.key_rounded, theme),
+                            const SizedBox(height: 6),
+                            _buildParsedRow('Tablet ID:', parsedConfig!.deviceId, Icons.badge_rounded, theme),
+                          ],
+                        ),
+                      ),
+                    ] else if (bulkController.text.trim().isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.errorContainer.withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline_rounded, color: theme.colorScheme.error, size: 18),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Kód musí obsahovať server, kľúč a tablet ID oddelené pomlčkou (-) napr. server.sk-kluc-TAB01',
+                                style: TextStyle(color: theme.colorScheme.onErrorContainer, fontSize: 12),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.red.withOpacity(0.3)),
+                        ),
+                        child: Text(
+                          errorMessage!,
+                          style: const TextStyle(color: Colors.red, fontSize: 13),
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 20),
+
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: (parsedConfig == null || isTestingBulk)
+                                ? null
+                                : () {
+                                    setState(() {
+                                      _urlController.text = parsedConfig!.serverUrl;
+                                      _apiKeyController.text = parsedConfig!.apiKey;
+                                      _deviceIdController.text = parsedConfig!.deviceId;
+                                      _lastTestResult = null;
+                                    });
+                                    Navigator.of(ctx).pop();
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('Údaje pre tablet "${parsedConfig!.deviceId}" boli vložené do sprievodcu.'),
+                                      ),
+                                    );
+                                  },
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: const Text('Vyplniť polia'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            onPressed: (parsedConfig == null || isTestingBulk)
+                                ? null
+                                : () async {
+                                    setModalState(() {
+                                      isTestingBulk = true;
+                                      errorMessage = null;
+                                    });
+
+                                    final navigator = Navigator.of(context);
+                                    final result = await _apiService.testConnection(parsedConfig!);
+                                    if (!mounted || !ctx.mounted) return;
+
+                                    if (result.isSuccess) {
+                                      setState(() {
+                                        _urlController.text = parsedConfig!.serverUrl;
+                                        _apiKeyController.text = parsedConfig!.apiKey;
+                                        _deviceIdController.text = parsedConfig!.deviceId;
+                                      });
+
+                                      await _storageService.saveConfig(parsedConfig!);
+                                      await BackgroundService().schedulePeriodicReports();
+
+                                      if (!mounted) return;
+                                      if (ctx.mounted) {
+                                        Navigator.of(ctx).pop();
+                                      }
+
+                                      if (widget.isEditing) {
+                                        navigator.pop(true);
+                                      } else {
+                                        navigator.pushReplacement(
+                                          MaterialPageRoute(builder: (_) => const DashboardScreen()),
+                                        );
+                                      }
+                                    } else {
+                                      setModalState(() {
+                                        isTestingBulk = false;
+                                        errorMessage = 'Chyba overenia: ${result.message}';
+                                      });
+                                    }
+                                  },
+                            style: FilledButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: isTestingBulk
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: M3ShapeMorphLoader(size: 20, color: Colors.white),
+                                  )
+                                : const Text('Použiť a dokončiť'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildParsedRow(String label, String value, IconData icon, ThemeData theme) {
+    return Row(
+      children: [
+        Icon(icon, size: 15, color: theme.colorScheme.onSurfaceVariant),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
   String get _detectedDeviceName {
     final manufacturer = _deviceInfo['manufacturer']?.toString() ?? '';
     final model = _deviceInfo['model']?.toString() ?? '';
@@ -225,6 +535,14 @@ class _SetupScreenState extends State<SetupScreen> {
                 onPressed: () => Navigator.of(context).pop(),
               )
             : null,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flash_on_rounded),
+            tooltip: 'Hromadné nastavenie (Bulk Setup)',
+            onPressed: _openBulkSetupDialog,
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -383,7 +701,58 @@ class _SetupScreenState extends State<SetupScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
+
+            // Bulk Setup Quick Banner Card
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.primaryContainer.withOpacity(0.35),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: theme.colorScheme.primary.withOpacity(0.2)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.flash_on_rounded, color: Colors.white, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Hromadné nastavenie (Bulk Setup)',
+                            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Máte kód? (adresaserveru-tabletkey-tabid)',
+                            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    FilledButton.tonal(
+                      onPressed: _openBulkSetupDialog,
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      child: const Text('Zadať kód'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
 
             // Server URL Field
             TextFormField(

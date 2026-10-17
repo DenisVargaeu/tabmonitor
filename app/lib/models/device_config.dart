@@ -37,6 +37,107 @@ class DeviceConfig {
     return Uri.parse('$base/api.php?action=report&api_key=$cleanKey');
   }
 
+  /// Formats this configuration as a single bulk setup string.
+  /// Syntax: adresaserveru-tabletkey-tabid
+  String get bulkSetupCode {
+    return '${serverUrl.trim()}-${apiKey.trim()}-${deviceId.trim()}';
+  }
+
+  /// Parses a bulk setup string in syntax:
+  /// adresaserveru-tabletkey-tabid
+  ///
+  /// Examples:
+  /// - https://school.sk/tabmonitor-secretkey123-TAB01
+  /// - http://192.168.1.10:8080-secretkey123-TAB-01
+  /// - https://my-school.sk/tabmonitor-secretkey123-TAB-01
+  /// - 192.168.1.50:8080-5sadd24c4sdf4sd2v12fb42dfg45f2fdg4fdg24fg45f-XX-01
+  static DeviceConfig? parseBulkSetupCode(String rawCode) {
+    final s = rawCode.trim();
+    if (s.isEmpty) return null;
+
+    // Optional secondary fallback delimiters
+    if (s.contains('|') && s.split('|').length == 3) {
+      final p = s.split('|');
+      return DeviceConfig(
+        serverUrl: p[0].trim(),
+        apiKey: p[1].trim(),
+        deviceId: p[2].trim(),
+      );
+    }
+    if (s.contains(';') && s.split(';').length == 3) {
+      final p = s.split(';');
+      return DeviceConfig(
+        serverUrl: p[0].trim(),
+        apiKey: p[1].trim(),
+        deviceId: p[2].trim(),
+      );
+    }
+
+    final parts = s.split('-');
+    if (parts.length < 3) return null;
+
+    if (parts.length == 3) {
+      final url = parts[0].trim();
+      final key = parts[1].trim();
+      final id = parts[2].trim();
+      if (url.isNotEmpty && key.isNotEmpty && id.isNotEmpty) {
+        return DeviceConfig(serverUrl: url, apiKey: key, deviceId: id);
+      }
+      return null;
+    }
+
+    // When there are more than 3 parts (due to hyphens in URL domain or tablet ID like TAB-01):
+    // Evaluate candidate split points between URL, Key, and Device ID.
+    int bestScore = -999;
+    String bestUrl = '';
+    String bestKey = '';
+    String bestId = '';
+
+    for (int i = 1; i < parts.length - 1; i++) {
+      final url = parts.sublist(0, i).join('-').trim();
+      final key = parts[i].trim();
+      final devId = parts.sublist(i + 1).join('-').trim();
+
+      int score = 0;
+      final lowerUrl = url.toLowerCase();
+      if (lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://')) {
+        score += 10;
+      }
+      if (url.contains('.') || url.contains(':') || url.contains('/')) {
+        score += 5;
+      }
+      if (!key.contains('/') && !key.contains(':') && !key.contains(' ')) {
+        score += 5;
+      }
+      if (key.length >= 8) {
+        score += 5;
+      }
+      if (devId.length <= 32 && !devId.contains('/') && !devId.contains(':')) {
+        score += 5;
+      }
+      if (devId.contains(RegExp(r'\d'))) {
+        score += 3;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestUrl = url;
+        bestKey = key;
+        bestId = devId;
+      }
+    }
+
+    if (bestUrl.isNotEmpty && bestKey.isNotEmpty && bestId.isNotEmpty) {
+      return DeviceConfig(
+        serverUrl: bestUrl,
+        apiKey: bestKey,
+        deviceId: bestId,
+      );
+    }
+
+    return null;
+  }
+
   /// Validate if configuration has minimum valid fields.
   bool get isValid {
     return serverUrl.trim().isNotEmpty &&

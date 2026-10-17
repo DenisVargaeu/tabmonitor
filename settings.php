@@ -48,6 +48,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $successMessage = "Low battery threshold successfully updated to {$threshold}%.";
             }
         }
+    } elseif ($formAction === 'update_interval') {
+        $intervalRaw = $_POST['report_interval_minutes'] ?? null;
+
+        if (!isset($intervalRaw) || !is_numeric($intervalRaw)) {
+            $errorMessage = 'Reporting interval must be a valid number.';
+        } else {
+            $interval = (int)$intervalRaw;
+            if ($interval < 5 || $interval > 120) {
+                $errorMessage = 'Reporting interval must be between 5 and 120 minutes.';
+            } else {
+                set_db_setting(
+                    $pdo,
+                    'report_interval_minutes',
+                    (string)$interval,
+                    'Interval in minutes between tablet battery reports (min 5, default 15)'
+                );
+                $successMessage = "Tablet reporting interval successfully updated to {$interval} minutes.";
+            }
+        }
     } elseif ($formAction === 'change_password') {
         $currentPass = (string)($_POST['current_password'] ?? '');
         $newPass     = (string)($_POST['new_password'] ?? '');
@@ -116,6 +135,16 @@ $currentThreshold = (int)get_db_setting(
     $config['app']['default_low_battery_threshold'] ?? 20
 );
 
+// Fetch current reporting interval from DB
+$currentInterval = (int)get_db_setting(
+    $pdo,
+    'report_interval_minutes',
+    $config['app']['default_report_interval_minutes'] ?? 15
+);
+if ($currentInterval < 5 || $currentInterval > 120) {
+    $currentInterval = 15;
+}
+
 $tabPrefix = get_table_prefix($config);
 $deviceCountStmt = $pdo->query("SELECT COUNT(*) FROM `{$tabPrefix}devices`");
 $totalDevicesCount = (int)$deviceCountStmt->fetchColumn();
@@ -151,6 +180,9 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
       <div class="user-controls">
         <span class="threshold-badge">
           ⚡ Alert: <strong><?= $currentThreshold ?>%</strong>
+        </span>
+        <span class="threshold-badge" style="background: rgba(14, 165, 233, 0.15); color: #0284c7; border: 1px solid rgba(14, 165, 233, 0.3);">
+          ⏱️ Interval: <strong><?= $currentInterval ?>m</strong>
         </span>
         <span class="user-name">👤 <?= $teacherUsername ?></span>
         <a href="logout.php" class="btn-logout" title="Sign out">Log Out</a>
@@ -218,7 +250,57 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
           </form>
         </div>
 
-        <!-- 2. Register New Tablet ID Card -->
+        <!-- 2. Tablet Reporting Interval Card -->
+        <div class="settings-card">
+          <h2 class="settings-card-title">⏱️ Tablet Reporting Interval</h2>
+          <p class="settings-card-desc">
+            Global frequency at which connected tablets submit battery telemetry to the server. Default is 15 minutes, but can be set down to 5 minutes for rapid tracking.
+          </p>
+
+          <form method="POST" action="settings.php">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+            <input type="hidden" name="form_action" value="update_interval">
+
+            <div class="threshold-slider-group">
+              <input 
+                type="range" 
+                id="intervalRange" 
+                min="5" 
+                max="60" 
+                step="1"
+                value="<?= $currentInterval ?>" 
+                class="threshold-slider"
+                oninput="document.getElementById('intervalNumber').value = this.value"
+              >
+              <input 
+                type="number" 
+                id="intervalNumber" 
+                name="report_interval_minutes" 
+                min="5" 
+                max="120" 
+                value="<?= $currentInterval ?>" 
+                class="threshold-input-number"
+                required
+                oninput="document.getElementById('intervalRange').value = this.value"
+              >
+              <span style="font-weight: 700; color: var(--text-muted); font-size: 1.1rem;">min</span>
+            </div>
+
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem; flex-wrap: wrap;">
+              <button type="button" class="btn-preset" onclick="setIntervalVal(5)">5m (Min)</button>
+              <button type="button" class="btn-preset" onclick="setIntervalVal(10)">10m</button>
+              <button type="button" class="btn-preset" onclick="setIntervalVal(15)">15m (Default)</button>
+              <button type="button" class="btn-preset" onclick="setIntervalVal(30)">30m</button>
+              <button type="button" class="btn-preset" onclick="setIntervalVal(60)">60m</button>
+            </div>
+
+            <button type="submit" class="btn-primary" style="width: auto; padding: 0.65rem 1.5rem;">
+              Save Reporting Interval
+            </button>
+          </form>
+        </div>
+
+        <!-- 3. Register New Tablet ID Card -->
         <div class="settings-card">
           <h2 class="settings-card-title">📱 Register New Tablet ID</h2>
           <p class="settings-card-desc">
@@ -348,6 +430,10 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
               <span class="info-val"><a href="index.php" style="color: var(--primary); text-decoration: none; font-weight: bold;"><?= $totalDevicesCount ?> tablets ➔</a></span>
             </li>
             <li class="info-item">
+              <span class="info-label">Reporting Interval</span>
+              <span class="info-val"><?= $currentInterval ?> mins</span>
+            </li>
+            <li class="info-item">
               <span class="info-label">Offline Timeout</span>
               <span class="info-val"><?= (int)($config['app']['offline_threshold_minutes'] ?? 30) ?> mins</span>
             </li>
@@ -381,5 +467,13 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
     </div>
   </footer>
 
+  <script>
+    function setIntervalVal(minutes) {
+      const range = document.getElementById('intervalRange');
+      const number = document.getElementById('intervalNumber');
+      if (range) range.value = minutes;
+      if (number) number.value = minutes;
+    }
+  </script>
 </body>
 </html>

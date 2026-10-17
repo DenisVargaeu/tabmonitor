@@ -185,6 +185,16 @@ if (!empty($clientTeacherToken) && !empty($expectedTeacherKey) && hash_equals($e
     }
 }
 
+// Fallback: Check active PHP teacher session if request originates from web browser
+if ($userRole === AUTH_ROLE_NONE) {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    if (!empty($_SESSION['teacher_id'])) {
+        $userRole = AUTH_ROLE_TEACHER;
+    }
+}
+
 // -----------------------------------------------------------------------------
 // Route & Request Method Resolution
 // -----------------------------------------------------------------------------
@@ -252,6 +262,17 @@ if ($lowBatteryThreshold < 0 || $lowBatteryThreshold > 100) {
     $lowBatteryThreshold = 20;
 }
 
+// Resolve current reporting interval (DB overrides config default if present, default 15 min, min 5 min)
+$intervalSetting = get_db_setting($pdo, 'report_interval_minutes');
+$reportIntervalMinutes = ($intervalSetting !== null && is_numeric($intervalSetting))
+    ? (int)$intervalSetting
+    : (int)($config['app']['default_report_interval_minutes'] ?? 15);
+
+// Validate interval range: default 15, allowed down to 5 minutes, up to 120 minutes
+if ($reportIntervalMinutes < 5 || $reportIntervalMinutes > 120) {
+    $reportIntervalMinutes = 15;
+}
+
 // -----------------------------------------------------------------------------
 // Endpoint Handlers
 // -----------------------------------------------------------------------------
@@ -313,12 +334,51 @@ try {
             }
 
             send_json_response(200, [
-                'status'            => 'ok',
-                'message'           => 'TabMonitor API connection successful.',
-                'authenticated_as'  => ($userRole === AUTH_ROLE_TEACHER) ? 'teacher' : 'tablet',
-                'server_time'       => date('c'),
-                'battery_threshold' => $lowBatteryThreshold,
-                'device'            => $deviceInfo,
+                'status'                  => 'ok',
+                'message'                 => 'TabMonitor API connection successful.',
+                'authenticated_as'        => ($userRole === AUTH_ROLE_TEACHER) ? 'teacher' : 'tablet',
+                'server_time'             => date('c'),
+                'battery_threshold'       => $lowBatteryThreshold,
+                'report_interval_minutes' => $reportIntervalMinutes,
+                'device'                  => $deviceInfo,
+            ]);
+            break;
+
+        // =====================================================================
+        // 1b. Check Sync / Poll Commands Endpoint
+        // Lightweight endpoint for connected tablets to receive remote commands
+        // such as teacher-initiated force refresh requests.
+        // =====================================================================
+        case 'check-sync':
+        case 'poll-commands':
+        case 'sync-check':
+            if ($userRole === AUTH_ROLE_NONE) {
+                send_json_response(401, [
+                    'status'  => 'error',
+                    'code'    => 401,
+                    'message' => 'Unauthorized: Valid API key required.',
+                ]);
+            }
+
+            $forceSyncSetting = get_db_setting($pdo, 'force_sync_requested_at');
+            $forceSyncTimestamp = 0;
+            $forceSyncRequested = false;
+
+            if ($forceSyncSetting !== null && is_numeric($forceSyncSetting)) {
+                $forceSyncTimestamp = (int)$forceSyncSetting;
+                // Active if requested within the last 120 seconds
+                if ((time() - $forceSyncTimestamp) <= 120) {
+                    $forceSyncRequested = true;
+                }
+            }
+
+            send_json_response(200, [
+                'status'                  => 'ok',
+                'force_sync_requested'    => $forceSyncRequested,
+                'force_sync_timestamp'    => $forceSyncTimestamp,
+                'force_sync_at'           => $forceSyncTimestamp > 0 ? date('Y-m-d H:i:s', $forceSyncTimestamp) : null,
+                'report_interval_minutes' => $reportIntervalMinutes,
+                'server_time'             => date('c'),
             ]);
             break;
 
@@ -447,14 +507,15 @@ try {
             $isLowBattery = ($batteryLevel <= $lowBatteryThreshold);
 
             send_json_response(200, [
-                'status'         => 'ok',
-                'message'        => 'Battery report received successfully.',
-                'device_id'      => $deviceId,
-                'battery_level'  => $batteryLevel,
-                'is_charging'    => $isCharging,
-                'is_low_battery' => $isLowBattery,
-                'threshold'      => $lowBatteryThreshold,
-                'reported_at'    => $now,
+                'status'                  => 'ok',
+                'message'                 => 'Battery report received successfully.',
+                'device_id'               => $deviceId,
+                'battery_level'           => $batteryLevel,
+                'is_charging'             => $isCharging,
+                'is_low_battery'          => $isLowBattery,
+                'threshold'               => $lowBatteryThreshold,
+                'report_interval_minutes' => $reportIntervalMinutes,
+                'reported_at'             => $now,
             ]);
             break;
 
@@ -580,6 +641,42 @@ try {
             break;
 
         // =====================================================================
+        // 3b. Request Force Sync Endpoint (Teacher / Administrator)
+        // Broadcasts an immediate telemetry update signal to all connected tablets.
+        // Tablets polling check-sync will instantly report their latest battery state.
+        // =====================================================================
+        case 'request-force-sync':
+        case 'force-sync':
+            if ($userRole !== AUTH_ROLE_TEACHER) {
+                send_json_response(401, [
+                    'status'  => 'error',
+                    'code'    => 401,
+                    'message' => 'Unauthorized: Teacher authentication required to request fleet sync.',
+                ]);
+            }
+
+            $nowTs = time();
+            set_db_setting(
+                $pdo,
+                'force_sync_requested_at',
+                (string)$nowTs,
+                'Timestamp of last teacher force sync command broadcast to tablet fleet'
+            );
+
+            // Fetch total registered active devices count
+            $stmt = $pdo->query("SELECT COUNT(*) FROM `{$tabPrefix}devices` WHERE is_active = 1");
+            $activeCount = (int)$stmt->fetchColumn();
+
+            send_json_response(200, [
+                'status'               => 'ok',
+                'message'              => 'Force sync command broadcast to all active tablets.',
+                'force_sync_timestamp' => $nowTs,
+                'force_sync_at'        => date('Y-m-d H:i:s', $nowTs),
+                'active_devices_count' => $activeCount,
+            ]);
+            break;
+
+        // =====================================================================
         // 4. Settings Endpoint
         // View or update system settings (e.g., low battery threshold).
         // SECURITY: Shared tablet key MUST NEVER modify settings!
@@ -631,11 +728,40 @@ try {
                     $lowBatteryThreshold = $newThreshold;
                 }
 
+                if (isset($requestData['report_interval_minutes'])) {
+                    if (!is_numeric($requestData['report_interval_minutes'])) {
+                        send_json_response(400, [
+                            'status'  => 'error',
+                            'code'    => 400,
+                            'message' => 'report_interval_minutes must be an integer between 5 and 120.',
+                        ]);
+                    }
+
+                    $newInterval = (int)$requestData['report_interval_minutes'];
+                    if ($newInterval < 5 || $newInterval > 120) {
+                        send_json_response(400, [
+                            'status'  => 'error',
+                            'code'    => 400,
+                            'message' => 'report_interval_minutes must be between 5 and 120 minutes.',
+                        ]);
+                    }
+
+                    set_db_setting(
+                        $pdo,
+                        'report_interval_minutes',
+                        (string)$newInterval,
+                        'Interval in minutes between tablet battery reports (min 5, default 15)'
+                    );
+
+                    $reportIntervalMinutes = $newInterval;
+                }
+
                 send_json_response(200, [
                     'status'   => 'ok',
                     'message'  => 'Settings updated successfully.',
                     'settings' => [
                         'low_battery_threshold'     => $lowBatteryThreshold,
+                        'report_interval_minutes'   => $reportIntervalMinutes,
                         'offline_threshold_minutes' => (int)($config['app']['offline_threshold_minutes'] ?? 30),
                     ],
                 ]);
@@ -646,6 +772,7 @@ try {
                 'status'   => 'ok',
                 'settings' => [
                     'low_battery_threshold'     => $lowBatteryThreshold,
+                    'report_interval_minutes'   => $reportIntervalMinutes,
                     'offline_threshold_minutes' => (int)($config['app']['offline_threshold_minutes'] ?? 30),
                 ],
             ]);

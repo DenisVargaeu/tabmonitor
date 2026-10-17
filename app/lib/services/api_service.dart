@@ -54,6 +54,7 @@ class ApiService {
           ? data['message'].toString()
           : null;
       final serverVersion = data?['version']?.toString() ?? response.headers['x-tabmonitor-version'];
+      final reportInterval = (data?['report_interval_minutes'] as num?)?.toInt();
 
       if (response.statusCode == 200 && data != null && data['status'] == 'ok') {
         final device = data['device'] as Map<String, dynamic>?;
@@ -66,6 +67,7 @@ class ApiService {
           deviceName: name,
           isActive: isActive,
           serverVersion: serverVersion,
+          reportIntervalMinutes: reportInterval,
         );
       } else if (response.statusCode == 401) {
         return ApiTestResult.failure(
@@ -145,6 +147,7 @@ class ApiService {
           ? data['message'].toString()
           : null;
       final serverVersion = data?['version']?.toString() ?? response.headers['x-tabmonitor-version'];
+      final reportInterval = (data?['report_interval_minutes'] as num?)?.toInt();
 
       if (response.statusCode == 200 && data != null && data['status'] == 'ok') {
         final isLow = data['is_low_battery'] == true;
@@ -156,6 +159,7 @@ class ApiService {
           isLowBattery: isLow,
           threshold: threshold,
           serverVersion: serverVersion,
+          reportIntervalMinutes: reportInterval,
         );
       } else if (response.statusCode == 401) {
         return ApiReportResult.failure(

@@ -97,6 +97,16 @@ $stmt = $pdo->query(
 );
 $rows = $stmt->fetchAll();
 
+// Compute base URL and tablet key for bulk setup codes (syntax: server-key-id)
+$isHttps = (!empty($_SERVER['HTTPS']) && strtolower($_SERVER['HTTPS']) !== 'off')
+    || (isset($_SERVER['SERVER_PORT']) && (int)$_SERVER['SERVER_PORT'] === 443)
+    || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
+$protocol = $isHttps ? 'https://' : 'http://';
+$host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$baseDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
+$serverBaseUrl = $protocol . $host . $baseDir;
+$tabletApiKey = (string)($config['security']['tablet_api_key'] ?? '');
+
 $devices = [];
 $lowBatteryDevices = [];
 $totalOnline = 0;
@@ -131,6 +141,7 @@ foreach ($rows as $row) {
     }
 
     $isLowBattery = ($batteryLevel !== null && $batteryLevel <= $lowBatteryThreshold);
+    $bulkCode = $serverBaseUrl . '-' . $tabletApiKey . '-' . (string)$row['device_id'];
 
     $deviceItem = [
         'id'                   => (int)$row['id'],
@@ -146,6 +157,7 @@ foreach ($rows as $row) {
         'minutes_since_report' => $minutesSinceReport,
         'relative_time'        => format_relative_time($row['last_reported_at']),
         'last_ip'              => $row['last_ip'],
+        'bulk_setup_code'      => $bulkCode,
     ];
 
     $devices[] = $deviceItem;
@@ -157,6 +169,7 @@ foreach ($rows as $row) {
 
 $totalRegistered = count($devices);
 $totalLowBattery = count($lowBatteryDevices);
+$allBulkCodes = implode("\n", array_map(fn($d) => $d['bulk_setup_code'], $devices));
 $csrfToken = get_csrf_token();
 $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', ENT_QUOTES, 'UTF-8');
 ?>
@@ -304,9 +317,14 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
     <section class="section-devices">
       <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
         <h2 class="section-title">📋 All Registered Tablets</h2>
-        <button type="button" class="btn-primary" onclick="toggleAddDeviceForm()" id="btnAddDeviceBtn" style="width: auto; padding: 0.5rem 1.1rem; font-size: 0.9rem;">
-          ➕ Add Tablet ID
-        </button>
+        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+          <button type="button" class="btn-secondary" onclick="toggleBulkModal(true)" style="width: auto; padding: 0.5rem 1.1rem; font-size: 0.9rem;">
+            ⚡ Bulk Setup Kódy
+          </button>
+          <button type="button" class="btn-primary" onclick="toggleAddDeviceForm()" id="btnAddDeviceBtn" style="width: auto; padding: 0.5rem 1.1rem; font-size: 0.9rem;">
+            ➕ Add Tablet ID
+          </button>
+        </div>
       </div>
 
       <!-- Add New Tablet Form Card -->
@@ -512,6 +530,10 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
                   </td>
                   <td style="text-align: right;">
                     <div class="action-buttons" style="justify-content: flex-end;">
+                      <button type="button" class="btn-action btn-bulk-copy" title="Copy Bulk Setup Code: <?= htmlspecialchars($d['bulk_setup_code'], ENT_QUOTES, 'UTF-8') ?>" onclick="copyBulkCode('<?= htmlspecialchars($d['bulk_setup_code'], ENT_QUOTES, 'UTF-8') ?>', '<?= htmlspecialchars($d['device_id'], ENT_QUOTES, 'UTF-8') ?>')">
+                        ⚡ Kód
+                      </button>
+
                       <form method="POST" action="index.php" style="display:inline;" onsubmit="return confirm('Toggle active status for <?= htmlspecialchars($d['device_id'], ENT_QUOTES, 'UTF-8') ?>?');">
                         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
                         <input type="hidden" name="form_action" value="toggle_active">
@@ -655,7 +677,118 @@ $teacherUsername = htmlspecialchars($_SESSION['teacher_username'] ?? 'Teacher', 
         document.getElementById('new_device_id')?.focus();
       }
     }
+
+    function toggleBulkModal(show) {
+      const modal = document.getElementById('bulkSetupModal');
+      if (!modal) return;
+      modal.style.display = show ? 'flex' : 'none';
+    }
+
+    function copyBulkCode(code, deviceId) {
+      navigator.clipboard.writeText(code).then(function() {
+        showToast('Kód pre tablet ' + deviceId + ' bol skopírovaný!');
+      }).catch(function() {
+        prompt('Skopírujte si Bulk Setup kód:', code);
+      });
+    }
+
+    function copyAllBulkCodes() {
+      const textarea = document.getElementById('allBulkCodesTextarea');
+      if (textarea) {
+        textarea.select();
+        navigator.clipboard.writeText(textarea.value).then(function() {
+          showToast('Všetky Bulk Setup kódy boli skopírované!');
+        }).catch(function() {
+          showToast('Kódy boli označené, stlačte Ctrl+C.');
+        });
+      }
+    }
+
+    function showToast(message) {
+      const toast = document.createElement('div');
+      toast.innerText = message;
+      toast.style.position = 'fixed';
+      toast.style.bottom = '24px';
+      toast.style.right = '24px';
+      toast.style.background = '#0f172a';
+      toast.style.color = '#ffffff';
+      toast.style.padding = '12px 20px';
+      toast.style.borderRadius = '10px';
+      toast.style.boxShadow = '0 6px 20px rgba(0,0,0,0.2)';
+      toast.style.zIndex = '9999';
+      toast.style.fontSize = '0.9rem';
+      toast.style.fontWeight = '500';
+      toast.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+      document.body.appendChild(toast);
+      setTimeout(function() {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+        setTimeout(function() { toast.remove(); }, 300);
+      }, 3000);
+    }
   </script>
+
+  <!-- Bulk Setup Modal -->
+  <div id="bulkSetupModal" class="modal-backdrop" style="display: none;" onclick="if(event.target===this) toggleBulkModal(false);">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
+            ⚡ Hromadné nastavenie tabletov (Bulk Setup)
+          </h3>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">
+            Syntax kódu pre tablety: <code style="background: var(--bg-surface, #f1f5f9); padding: 2px 6px; border-radius: 4px; font-weight: bold;">adresaserveru-tabletkey-tabid</code>
+          </p>
+        </div>
+        <button type="button" class="btn-close" onclick="toggleBulkModal(false)" title="Close">✕</button>
+      </div>
+
+      <div class="modal-body" style="padding: 1.25rem 0; overflow-y: auto;">
+        <p style="font-size: 0.9rem; margin-bottom: 1rem; color: var(--text-main);">
+          Tento kód stačí skopírovať a zadať v aplikácii na tablete v <strong>1. kroku sprievodcu</strong> cez tlačidlo <em>„Zadať kód“</em> alebo ikonu ⚡. Aplikácia sa automaticky otestuje a nastaví na 1 klik!
+        </p>
+
+        <div style="margin-bottom: 1.25rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+            <label style="font-size: 0.8rem; font-weight: bold; color: var(--text-muted); text-transform: uppercase;">Všetky kódy (1 tablet na riadok):</label>
+            <button type="button" class="btn-action btn-bulk-copy" style="font-size: 0.8rem; padding: 4px 10px;" onclick="copyAllBulkCodes()">
+              📋 Kopírovať všetko
+            </button>
+          </div>
+          <textarea id="allBulkCodesTextarea" readonly class="form-input" style="height: 110px; font-family: monospace; font-size: 0.8rem; line-height: 1.4; resize: vertical;"><?= htmlspecialchars($allBulkCodes, ENT_QUOTES, 'UTF-8') ?></textarea>
+        </div>
+
+        <h4 style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-main);">Kódy pre jednotlivé tablety:</h4>
+        <div style="max-height: 220px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+            <tbody>
+              <?php foreach ($devices as $d): ?>
+                <tr style="border-bottom: 1px solid var(--border-color);">
+                  <td style="padding: 8px 12px; font-weight: bold; width: 100px;">
+                    <?= htmlspecialchars($d['device_id'], ENT_QUOTES, 'UTF-8') ?>
+                  </td>
+                  <td style="padding: 8px 12px; font-family: monospace; font-size: 0.78rem; word-break: break-all;">
+                    <?= htmlspecialchars($d['bulk_setup_code'], ENT_QUOTES, 'UTF-8') ?>
+                  </td>
+                  <td style="padding: 8px 12px; text-align: right; width: 85px;">
+                    <button type="button" class="btn-action btn-bulk-copy" style="padding: 4px 8px; font-size: 0.75rem;" onclick="copyBulkCode('<?= htmlspecialchars($d['bulk_setup_code'], ENT_QUOTES, 'UTF-8') ?>', '<?= htmlspecialchars($d['device_id'], ENT_QUOTES, 'UTF-8') ?>')">
+                      📋 Copy
+                    </button>
+                  </td>
+                </tr>
+              <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; justify-content: flex-end; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+        <button type="button" class="btn-primary" onclick="toggleBulkModal(false)" style="width: auto; padding: 0.5rem 1.25rem;">
+          Zatvoriť
+        </button>
+      </div>
+    </div>
+  </div>
 
   <!-- Web Admin Footer -->
   <footer class="app-footer">

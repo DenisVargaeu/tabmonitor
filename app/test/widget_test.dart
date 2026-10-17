@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/models/device_config.dart';
 import 'package:app/models/api_response.dart';
+import 'package:app/services/storage_service.dart';
 import 'package:app/services/system_settings_service.dart';
 import 'package:app/widgets/m3_shape_morph_loader.dart';
 import 'package:app/main.dart';
@@ -48,6 +49,34 @@ void main() {
       );
       expect(emptyConfig.isValid, isFalse);
     });
+
+    test('parseBulkSetupCode correctly parses syntax: adresaserveru-tabletkey-tabid', () {
+      // 1. Standard 3-part syntax
+      final res1 = DeviceConfig.parseBulkSetupCode('https://school.sk/tabmonitor-secretkey123-TAB01');
+      expect(res1, isNotNull);
+      expect(res1!.serverUrl, equals('https://school.sk/tabmonitor'));
+      expect(res1.apiKey, equals('secretkey123'));
+      expect(res1.deviceId, equals('TAB01'));
+      expect(res1.bulkSetupCode, equals('https://school.sk/tabmonitor-secretkey123-TAB01'));
+
+      // 2. Syntax with port and hyphen in device ID (TAB-01)
+      final res2 = DeviceConfig.parseBulkSetupCode('http://192.168.1.10:8080-secretkey123-TAB-01');
+      expect(res2, isNotNull);
+      expect(res2!.serverUrl, equals('http://192.168.1.10:8080'));
+      expect(res2.apiKey, equals('secretkey123'));
+      expect(res2.deviceId, equals('TAB-01'));
+
+      // 3. Syntax with hyphen in server domain and hyphen in device ID (XX-01)
+      final res3 = DeviceConfig.parseBulkSetupCode('https://my-school.sk/tabmonitor-5sadd24c4sdf4sd2v12fb42dfg45f2fdg4fdg24fg45f-XX-01');
+      expect(res3, isNotNull);
+      expect(res3!.serverUrl, equals('https://my-school.sk/tabmonitor'));
+      expect(res3.apiKey, equals('5sadd24c4sdf4sd2v12fb42dfg45f2fdg4fdg24fg45f'));
+      expect(res3.deviceId, equals('XX-01'));
+
+      // 4. Invalid strings
+      expect(DeviceConfig.parseBulkSetupCode(''), isNull);
+      expect(DeviceConfig.parseBulkSetupCode('invalid-string'), isNull);
+    });
   });
 
   group('ApiResponse Tests', () {
@@ -58,11 +87,13 @@ void main() {
         isActive: true,
         statusCode: 200,
         serverVersion: '2.1.0',
+        reportIntervalMinutes: 10,
       );
       expect(success.isSuccess, isTrue);
       expect(success.deviceName, equals('Test Tablet 01'));
       expect(success.statusCode, equals(200));
       expect(success.serverVersion, equals('2.1.0'));
+      expect(success.reportIntervalMinutes, equals(10));
 
       final failure = ApiTestResult.failure(
         message: 'Unauthorized',
@@ -72,6 +103,7 @@ void main() {
       expect(failure.isSuccess, isFalse);
       expect(failure.statusCode, equals(401));
       expect(failure.serverVersion, equals('2.1.0'));
+      expect(failure.reportIntervalMinutes, isNull);
     });
 
     test('ApiReportResult factory constructors work as expected', () {
@@ -81,11 +113,32 @@ void main() {
         threshold: 20,
         statusCode: 200,
         serverVersion: '2.1.0',
+        reportIntervalMinutes: 15,
       );
       expect(report.isSuccess, isTrue);
       expect(report.isLowBattery, isFalse);
       expect(report.threshold, equals(20));
       expect(report.serverVersion, equals('2.1.0'));
+      expect(report.reportIntervalMinutes, equals(15));
+    });
+  });
+
+  group('StorageService Interval Tests', () {
+    test('loadReportInterval returns default 15 if unset or invalid, and clamps minimum to 5', () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = StorageService();
+
+      expect(await storage.loadReportInterval(), equals(15));
+
+      await storage.saveReportInterval(5);
+      expect(await storage.loadReportInterval(), equals(5));
+
+      await storage.saveReportInterval(30);
+      expect(await storage.loadReportInterval(), equals(30));
+
+      // Cannot go below 5
+      await storage.saveReportInterval(2);
+      expect(await storage.loadReportInterval(), equals(5));
     });
   });
 

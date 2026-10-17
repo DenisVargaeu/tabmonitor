@@ -15,6 +15,7 @@ class StorageService {
   static const _keyLastReportSuccess = 'tm_last_report_success';
   static const _keyLastReportMessage = 'tm_last_report_message';
   static const _keySyncLogs = 'tm_sync_logs';
+  static const _keyReportInterval = 'tm_report_interval_minutes';
 
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
     aOptions: AndroidOptions(
@@ -83,6 +84,25 @@ class StorageService {
     await prefs.remove(_keyServerUrl);
     await prefs.remove(_keyApiKey);
     await prefs.remove(_keyDeviceId);
+  }
+
+  /// Load report interval in minutes (default 15 minutes, minimum 5 minutes).
+  Future<int> loadReportInterval() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final val = prefs.getInt(_keyReportInterval);
+      if (val != null && val >= 5 && val <= 120) {
+        return val;
+      }
+    } catch (_) {}
+    return 15; // default 15 minutes
+  }
+
+  /// Save report interval in minutes (clamped between 5 and 120 minutes).
+  Future<void> saveReportInterval(int minutes) async {
+    final clamped = minutes.clamp(5, 120);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyReportInterval, clamped);
   }
 
   /// Record metadata about the most recent battery report.

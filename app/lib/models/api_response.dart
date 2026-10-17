@@ -5,6 +5,8 @@ class ApiTestResult {
   final int? statusCode;
   final String? deviceName;
   final bool? isActive;
+  final String? serverVersion;
+  final int? reportIntervalMinutes;
   final DateTime timestamp;
 
   ApiTestResult({
@@ -13,6 +15,8 @@ class ApiTestResult {
     this.statusCode,
     this.deviceName,
     this.isActive,
+    this.serverVersion,
+    this.reportIntervalMinutes,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
@@ -21,6 +25,8 @@ class ApiTestResult {
     int? statusCode,
     String? deviceName,
     bool? isActive,
+    String? serverVersion,
+    int? reportIntervalMinutes,
   }) {
     return ApiTestResult(
       isSuccess: true,
@@ -28,17 +34,23 @@ class ApiTestResult {
       statusCode: statusCode,
       deviceName: deviceName,
       isActive: isActive,
+      serverVersion: serverVersion,
+      reportIntervalMinutes: reportIntervalMinutes,
     );
   }
 
   factory ApiTestResult.failure({
     required String message,
     int? statusCode,
+    String? serverVersion,
+    int? reportIntervalMinutes,
   }) {
     return ApiTestResult(
       isSuccess: false,
       message: message,
       statusCode: statusCode,
+      serverVersion: serverVersion,
+      reportIntervalMinutes: reportIntervalMinutes,
     );
   }
 }
@@ -50,6 +62,8 @@ class ApiReportResult {
   final int? statusCode;
   final bool? isLowBattery;
   final int? threshold;
+  final String? serverVersion;
+  final int? reportIntervalMinutes;
   final DateTime timestamp;
 
   ApiReportResult({
@@ -58,6 +72,8 @@ class ApiReportResult {
     this.statusCode,
     this.isLowBattery,
     this.threshold,
+    this.serverVersion,
+    this.reportIntervalMinutes,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
@@ -66,6 +82,8 @@ class ApiReportResult {
     int? statusCode,
     bool? isLowBattery,
     int? threshold,
+    String? serverVersion,
+    int? reportIntervalMinutes,
   }) {
     return ApiReportResult(
       isSuccess: true,
@@ -73,17 +91,23 @@ class ApiReportResult {
       statusCode: statusCode,
       isLowBattery: isLowBattery,
       threshold: threshold,
+      serverVersion: serverVersion,
+      reportIntervalMinutes: reportIntervalMinutes,
     );
   }
 
   factory ApiReportResult.failure({
     required String message,
     int? statusCode,
+    String? serverVersion,
+    int? reportIntervalMinutes,
   }) {
     return ApiReportResult(
       isSuccess: false,
       message: message,
       statusCode: statusCode,
+      serverVersion: serverVersion,
+      reportIntervalMinutes: reportIntervalMinutes,
     );
   }
 }

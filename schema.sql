@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS `tab_settings` (
 
 -- Default settings seed
 INSERT INTO `tab_settings` (`setting_key`, `setting_value`, `description`)
-VALUES ('low_battery_threshold', '20', 'Threshold percentage below which a device is flagged as low battery')
+VALUES
+    ('low_battery_threshold', '20', 'Threshold percentage below which a device is flagged as low battery'),
+    ('report_interval_minutes', '15', 'Interval in minutes between tablet battery reports (min 5, default 15)')
 ON DUPLICATE KEY UPDATE `description` = VALUES(`description`);
 
 -- -------------------------------------------------------------

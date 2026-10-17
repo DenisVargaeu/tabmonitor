@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../models/device_config.dart';
 import '../models/sync_log_entry.dart';
 import '../services/api_service.dart';
+import '../services/background_service.dart';
 import '../services/battery_service.dart';
 import '../services/storage_service.dart';
 import '../services/system_settings_service.dart';
@@ -47,9 +48,10 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
   List<SyncLogEntry> _syncLogs = [];
   String _logFilter = 'all'; // 'all', 'success', 'error'
 
-  // Countdown to next scheduled foreground report
-  static const int _foregroundReportInterval = 300; // 5 minutes
-  int _secondsUntilNextReport = _foregroundReportInterval;
+  // Dynamic reporting interval (default 15 minutes, configurable down to 5 minutes)
+  int _reportIntervalMinutes = 15;
+  int get _reportIntervalSeconds => _reportIntervalMinutes * 60;
+  int _secondsUntilNextReport = 15 * 60;
   Timer? _countdownTimer;
   Timer? _foregroundReportTimer;
   StreamSubscription<bool>? _chargingSubscription;
@@ -85,7 +87,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
 
   void _startCountdownTimer() {
     _countdownTimer?.cancel();
-    _secondsUntilNextReport = _foregroundReportInterval;
+    _secondsUntilNextReport = _reportIntervalSeconds;
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) return;
       if (_secondsUntilNextReport > 0) {
@@ -94,7 +96,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
         });
       } else {
         // Trigger report and reset countdown
-        _secondsUntilNextReport = _foregroundReportInterval;
+        _secondsUntilNextReport = _reportIntervalSeconds;
         _sendBatteryReport(silent: true);
       }
     });
@@ -128,8 +130,13 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       return;
     }
 
+    final savedInterval = await _storageService.loadReportInterval();
+    if (!mounted) return;
+
     setState(() {
       _config = config;
+      _reportIntervalMinutes = savedInterval;
+      _secondsUntilNextReport = savedInterval * 60;
     });
 
     await _loadNativeDeviceInfo();
@@ -140,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
     await _updateStatusNotification(
       isOnline: _lastReportSuccess ?? true,
       statusMessage: _lastReportMessage ?? 'TabMonitor pripravený',
-      nextReportSeconds: _foregroundReportInterval,
+      nextReportSeconds: _secondsUntilNextReport,
     );
 
     // Initial report on startup
@@ -230,6 +237,15 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       latencyMs: stopwatch.elapsedMilliseconds,
     );
 
+    // If server pushed a configured reporting interval, synchronize it
+    if (result.reportIntervalMinutes != null &&
+        result.reportIntervalMinutes! >= 5 &&
+        result.reportIntervalMinutes! != _reportIntervalMinutes) {
+      _reportIntervalMinutes = result.reportIntervalMinutes!;
+      await _storageService.saveReportInterval(_reportIntervalMinutes);
+      await BackgroundService().schedulePeriodicReports(intervalMinutes: _reportIntervalMinutes);
+    }
+
     if (!mounted) return;
 
     setState(() {
@@ -237,7 +253,7 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
       _lastReportTime = now;
       _lastReportSuccess = result.isSuccess;
       _lastReportMessage = result.message;
-      _secondsUntilNextReport = result.isSuccess ? _foregroundReportInterval : 60;
+      _secondsUntilNextReport = result.isSuccess ? _reportIntervalSeconds : 60;
     });
 
     await _loadSyncLogs();
@@ -273,6 +289,33 @@ class _DashboardScreenState extends State<DashboardScreen> with WidgetsBindingOb
           backgroundColor: result.isSuccess ? Colors.green.shade700 : Colors.red.shade700,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
+  }
+
+  Future<void> _changeReportInterval(int newMinutes) async {
+    final clamped = newMinutes.clamp(5, 60);
+    if (clamped == _reportIntervalMinutes) return;
+
+    setState(() {
+      _reportIntervalMinutes = clamped;
+      _secondsUntilNextReport = clamped * 60;
+    });
+
+    await _storageService.saveReportInterval(clamped);
+    await BackgroundService().schedulePeriodicReports(intervalMinutes: clamped);
+    await _updateStatusNotification(
+      isOnline: _lastReportSuccess ?? true,
+      statusMessage: _lastReportMessage ?? 'TabMonitor pripravený',
+      nextReportSeconds: _secondsUntilNextReport,
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Interval odosielania bol zmenený na $clamped minút.'),
+          behavior: SnackBarBehavior.floating,
         ),
       );
     }
@@ -1051,6 +1094,33 @@ TabMonitor Diagnostika:
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                     ),
                   ),
+                  if (_config != null && _config!.isValid) ...[
+                    const Divider(height: 18),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.flash_on_rounded, color: Colors.amber),
+                      title: const Text('Bulk Setup Kód', style: TextStyle(fontSize: 13, color: Colors.grey)),
+                      subtitle: Text(
+                        _config!.bulkSetupCode,
+                        style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.copy_rounded, size: 20),
+                        tooltip: 'Kopírovať kód',
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: _config!.bulkSetupCode));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Bulk Setup kód bol skopírovaný do schránky.'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   FilledButton.tonalIcon(
                     onPressed: _openSettings,
@@ -1060,6 +1130,98 @@ TabMonitor Diagnostika:
                       minimumSize: const Size.fromHeight(46),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Telemetry Reporting Interval Card
+          Card(
+            elevation: 0,
+            color: theme.colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: BorderSide(color: theme.colorScheme.outlineVariant.withOpacity(0.4)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.schedule_rounded, color: theme.colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Interval odosielania dát',
+                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '$_reportIntervalMinutes min',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: theme.colorScheme.onPrimaryContainer,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Frekvencia odosielania telemetrie batérie na server. Predvolené je 15 minút, no môžete ju znížiť až na 5 minút pre rýchlejší monitoring.',
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final m in [5, 10, 15, 30, 60])
+                        ChoiceChip(
+                          label: Text(
+                            m == 15 ? '15 min (Predvolené)' : '$m min',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: _reportIntervalMinutes == m ? FontWeight.bold : FontWeight.normal,
+                            ),
+                          ),
+                          selected: _reportIntervalMinutes == m,
+                          onSelected: (selected) {
+                            if (selected) {
+                              _changeReportInterval(m);
+                            }
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const Text('5 min', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      Expanded(
+                        child: Slider(
+                          value: _reportIntervalMinutes.toDouble(),
+                          min: 5.0,
+                          max: 60.0,
+                          divisions: 11,
+                          label: '$_reportIntervalMinutes min',
+                          onChanged: (val) {
+                            _changeReportInterval(val.round());
+                          },
+                        ),
+                      ),
+                      const Text('60 min', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    ],
                   ),
                 ],
               ),
